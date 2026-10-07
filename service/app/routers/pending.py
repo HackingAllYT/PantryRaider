@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 import httpx
@@ -23,6 +23,7 @@ from ..services.grocy import (GrocyClient, parse_grocycode, stock_has_product,
 from ..services.label_render import prettify_date
 from ..services import (best_by_provenance, expiry_learning, nutrition,
                         scan_session, scanner_mode, shopping_source)
+from ..storage_categories import classify_location
 
 router = APIRouter(prefix="/pending", tags=["pending"])
 
@@ -490,7 +491,10 @@ async def scan_barcode(body: ScanRequest, request: Request, db: Session = Depend
         .first()
     )
     if existing:
-        existing.quantity = (existing.quantity or 1.0) + body.quantity
+        # A barcode Grocy registers with an amount (a 6-pack barcode in
+        # bottles, say) adds that amount per scan (issue #65).
+        existing.quantity = ((existing.quantity or 1.0)
+                             + body.quantity * (existing.scan_amount or 1.0))
         db.commit()
         dup = await _is_duplicate(existing.name)
         return {"status": "merged", "item": _row_dict(existing, dup)}
@@ -531,8 +535,43 @@ async def scan_barcode(body: ScanRequest, request: Request, db: Session = Depend
     }
 
 
+async def grocy_barcode_item(barcode: str, db: Session) -> Optional[tuple[FoodItem, dict]]:
+    """The scanned item as Grocy already knows it, or None (issue #65).
+
+    A barcode registered in Grocy names a product the user set up by hand,
+    often with its own units (a case barcode in Packs, converted to the
+    Bottles it is stocked in), so it beats anything Open Food Facts could
+    guess. The name and unit come from Grocy; category and storage come from
+    the product's group and default location when those map onto ours; the
+    best-by is the product's own default days, else the usual rule estimate.
+    Never raises: an unreachable Grocy just falls back to the normal lookup.
+    """
+    try:
+        match = await GrocyClient().find_barcode(barcode)
+    except Exception:  # noqa: BLE001 - Grocy down: Open Food Facts still works
+        return None
+    if not match:
+        return None
+    item = FoodItem(name=match["name"], unit=match["unit"], barcode=barcode)
+    group = (match.get("product_group") or "").strip().lower()
+    for cat in FoodCategory:
+        if cat.value.lower() == group:
+            item.category = cat
+    bucket = classify_location(match.get("location") or "")
+    if bucket in StorageType._value2member_map_:
+        item.storage_type = StorageType(bucket)
+    days = match.get("default_best_before_days") or 0
+    if days > 0:
+        item.best_by_date = date.today() + timedelta(days=days)
+        item.best_by_source = "default"
+    return apply_defaults(item, db), match
+
+
 async def enrich_pending_item(item_id: int, barcode: str) -> None:
     """Background: resolve ``barcode`` to a product and fill in the pending row.
+
+    Grocy is asked first: a barcode it already has is filled in from that
+    product (issue #65). Open Food Facts (and the LLM) only run otherwise.
 
     Runs after the scan was already acked (FoodAssistant-x61t). Uses its OWN
     database session (never the request session, which is closed by the time
@@ -546,6 +585,27 @@ async def enrich_pending_item(item_id: int, barcode: str) -> None:
         row = db.query(PendingItem).filter(PendingItem.id == item_id).first()
         if row is None:
             return  # deleted before enrichment finished; nothing to do
+        known = await grocy_barcode_item(barcode, db)
+        if known is not None:
+            item, match = known
+            # Re-read the row: scans of the same barcode may have merged into
+            # it while Grocy answered, and each counts as one barcode amount.
+            db.refresh(row)
+            scans = row.quantity or 1.0
+            row.quantity = scans * match["amount"]
+            row.scan_amount = match["amount"]
+            row.grocy_product_id = match["product_id"]
+            row.name = item.name
+            row.unit = item.unit
+            row.category = item.category.value
+            row.storage_type = item.storage_type.value
+            row.best_by_date = (item.best_by_date.isoformat()
+                                if item.best_by_date else None)
+            row.best_by_source = item.best_by_source
+            row.lookup_failed = 0
+            row.enriching = 0
+            db.commit()
+            return
         try:
             item = await lookup_barcode(barcode, db)
             row.name = item.name
@@ -858,6 +918,7 @@ async def update_pending(item_id: int, body: PendingUpdate, request: Request, db
         row.suggested_source = (row.best_by_source or "none") if row.best_by_date else "none"
     old_storage = row.storage_type
     old_best_by = row.best_by_date
+    old_name = row.name
     # A hand-typed date has no recorded source (the best_by_date branch below
     # clears it on every manual date edit).
     hand_set = bool(old_best_by) and row.best_by_source is None
@@ -888,6 +949,10 @@ async def update_pending(item_id: int, body: PendingUpdate, request: Request, db
             row.best_by_source = "default"
     if body.name:
         row.lookup_failed = 0
+        if row.grocy_product_id and data["name"] != old_name:
+            # Renamed on the review screen: the user no longer means the
+            # Grocy product the barcode pointed at, so import it by name.
+            row.grocy_product_id = None
     db.commit()
     return _row_dict(row)
 
@@ -969,9 +1034,17 @@ async def commit_pending(body: CommitRequest, request: Request, db: Session = De
                 brand=row.brand,
                 notes=row.notes,
                 best_by_source=row.best_by_source,
+                # Registered on the product at import, so the next scan of
+                # this barcode is recognized in Grocy (issue #65).
+                barcode=row.barcode,
             )
             item = apply_defaults(item, db)
-            result = await grocy.import_item(item)
+            if row.grocy_product_id:
+                # Grocy already knew the scanned barcode (issue #65): stock
+                # that product, in its units, rather than one found by name.
+                result = await grocy.add_to_product(row.grocy_product_id, item)
+            else:
+                result = await grocy.import_item(item)
             # Community shelf-life learning (FoodAssistant-ezkh): a committed
             # row whose date the user set or corrected is one anonymous data
             # point, queued only when the sharing opt-in is on. Read before
