@@ -445,3 +445,27 @@ def test_a_write_skips_a_row_that_is_gone_or_already_on_the_date(grocy):
     assert grocy.entry_writes() == []
     assert _run(GrocyClient()._set_entry_best_by(1, 1, _d(9))) is True
     assert grocy.at(FRIDGE) == [(_d(9), 1)]
+
+
+# --- moving one location's stock (#73) -----------------------------------------
+
+def test_a_one_location_move_leaves_the_other_locations_stock_alone(grocy):
+    """The Inventory page lists a product kept in two places once per place;
+    moving the freezer row must not drag the fridge stock along."""
+    grocy.add(2, _d(4))                          # fridge
+    grocy.add(3, _d(90), location_id=FREEZER)    # freezer
+    result = _run(GrocyClient().move_product(1, "refrigerated",
+                                             from_location_id=FREEZER))
+    assert grocy.at(FREEZER) == []
+    assert sum(a for _d_, a in grocy.at(FRIDGE)) == 5
+    assert result["moved_amount"] == 3
+
+
+def test_a_one_location_move_keeps_the_default_while_stock_stays_behind(grocy):
+    grocy.add(2, _d(4))                          # fridge
+    grocy.add(3, _d(90), location_id=FREEZER)    # freezer
+    _run(GrocyClient().move_product(1, "frozen", from_location_id=99))
+    # Nothing sat at location 99, so nothing moved and the fridge stock that is
+    # still outside the freezer keeps the product's default where it was.
+    assert grocy.sent("POST", "/transfer") == []
+    assert grocy.sent("PUT", "/objects/products/1") == []

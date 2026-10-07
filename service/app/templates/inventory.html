@@ -41,6 +41,13 @@
   .item-row:last-child { border-bottom: none; }
   .item-name { flex: 1; min-width: 0; }
   .item-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Which Grocy location a row's stock sits in, when the panel name does not
+     already say so (a product kept in two places is listed once per place). */
+  .item-location {
+    font-size: 0.72rem;
+    color: var(--bs-secondary-color);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .item-qty {
     font-size: 0.78rem;
     color: var(--bs-secondary-color);
@@ -260,12 +267,18 @@ function renderPanel(panelId, countId, items, bucket) {
     el.innerHTML = '<div class="panel-empty"><i class="bi bi-check-circle text-success me-1"></i>Empty</div>';
     return;
   }
-  el.innerHTML = items.map(item => `
-    <div class="item-row" id="row-${item.product_id}" draggable="true"
-         data-product-id="${item.product_id}" data-bucket="${bucket}" data-name="${esc(item.name)}"
+  el.innerHTML = items.map(item => {
+    const loc = item.location_id || '';
+    const showLoc = item.location_name
+      && item.location_name.trim().toLowerCase() !== (BUCKET_LABELS[bucket] || '').trim().toLowerCase();
+    return `
+    <div class="item-row" id="${rowId(item.product_id, loc)}" draggable="true"
+         data-product-id="${item.product_id}" data-location-id="${loc}"
+         data-bucket="${bucket}" data-name="${esc(item.name)}"
          ondragstart="dragStart(event)" ondragend="dragEnd(event)">
       <div class="item-name">
         <div class="item-name-text" title="${esc(item.name)}${item.added_date ? ', added ' + item.added_date.slice(0,10) : ''}">${esc(item.name)}</div>
+        ${showLoc ? `<div class="item-location"><i class="bi bi-geo-alt me-1"></i>${esc(item.location_name)}</div>` : ''}
       </div>
       ${showAdded && item.added_date ? `<span class="item-qty">${item.added_date.slice(0,10)}</span>` : ''}
       <span class="item-qty">${item.amount % 1 === 0 ? item.amount : item.amount.toFixed(1)}${item.unit ? ' ' + esc(item.unit) : ''}</span>
@@ -276,7 +289,7 @@ function renderPanel(panelId, countId, items, bucket) {
         <i class="bi bi-pencil"></i>
       </button>
       <button class="btn btn-outline-secondary btn-icon" title="Move to another location"
-              onclick="openMoveModal(${item.product_id}, '${esc(item.name)}')">
+              onclick="openMoveModal(${item.product_id}, '${esc(item.name)}', '${loc}')">
         <i class="bi bi-arrow-left-right"></i>
       </button>
       ${item.amount > 0 ? `
@@ -285,7 +298,7 @@ function renderPanel(panelId, countId, items, bucket) {
         <i class="bi bi-box2"></i>
       </button>` : ''}
       <button class="btn btn-outline-secondary btn-icon" title="Mark consumed"
-              onclick="consume(${item.product_id}, ${item.amount}, '${esc(item.name)}')">
+              onclick="consume(${item.product_id}, ${item.amount}, '${esc(item.name)}', '${loc}')">
         <i class="bi bi-check2"></i>
       </button>
       ${PRINTING_ENABLED ? `
@@ -294,7 +307,14 @@ function renderPanel(panelId, countId, items, bucket) {
         <i class="bi bi-printer"></i>
       </button>` : ''}
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+// A product kept in two Grocy locations has one row per location (#73), so
+// a row is addressed by product and location together.
+function rowId(productId, locationId) {
+  return `row-${productId}-${locationId || 'none'}`;
 }
 
 // Item lookup map (keyed by product_id) for pre-filling modals
@@ -354,12 +374,13 @@ async function saveEdit() {
 }
 
 // Drag & Drop
-let dragged = null;  // { productId, fromBucket, name }
+let dragged = null;  // { productId, locationId, fromBucket, name }
 
 function dragStart(e) {
   const row = e.currentTarget;
   dragged = {
     productId: parseInt(row.dataset.productId),
+    locationId: row.dataset.locationId,
     fromBucket: row.dataset.bucket,
     name: row.dataset.name,
   };
@@ -392,16 +413,16 @@ async function dropItem(e) {
   const panel = e.currentTarget;
   panel.classList.remove('drop-target');
   if (!dragged || panel.dataset.bucket === dragged.fromBucket) return;
-  const { productId, name } = dragged;
+  const { productId, locationId, name } = dragged;
   dragged = null;
-  await moveItem(productId, panel.dataset.bucket, name);
+  await moveItem(productId, panel.dataset.bucket, name, locationId);
 }
 
 // Move via modal (touch devices)
-let moveTarget = null;  // { productId, name }
+let moveTarget = null;  // { productId, name, locationId }
 
-function openMoveModal(productId, name) {
-  moveTarget = { productId, name };
+function openMoveModal(productId, name, locationId) {
+  moveTarget = { productId, name, locationId };
   document.getElementById('moveModalName').textContent = name;
   new bootstrap.Modal(document.getElementById('moveModal')).show();
 }
@@ -409,17 +430,20 @@ function openMoveModal(productId, name) {
 async function moveFromModal(bucket) {
   bootstrap.Modal.getInstance(document.getElementById('moveModal')).hide();
   if (!moveTarget) return;
-  const { productId, name } = moveTarget;
+  const { productId, name, locationId } = moveTarget;
   moveTarget = null;
-  await moveItem(productId, bucket, name);
+  await moveItem(productId, bucket, name, locationId);
 }
 
-async function moveItem(productId, bucket, name) {
+async function moveItem(productId, bucket, name, locationId) {
   try {
+    // Only the dragged row's stock moves; the same product kept elsewhere stays.
+    const body = { bucket };
+    if (locationId) body.from_location_id = parseInt(locationId);
     const r = await fetch(`/inventory/move/${productId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bucket }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(await prErrText(r));
     // Crossing temperature natures adjusts the best-by (freezing extends,
@@ -497,14 +521,15 @@ async function markOpened(productId, name) {
   }
 }
 
-async function consume(productId, amount, name) {
+async function consume(productId, amount, name, locationId) {
   const fd = new FormData();
   fd.append('amount', amount);
+  if (locationId) fd.append('location_id', locationId);
   try {
     const r = await fetch(`/ui/consume/${productId}`, { method: 'POST', body: fd,
       redirect: 'manual' });
     // 303 redirect is expected on success
-    const row = document.getElementById(`row-${productId}`);
+    const row = document.getElementById(rowId(productId, locationId));
     if (row) row.remove();
     showToast(`✓ Consumed: ${name}`);
     // Update panel count

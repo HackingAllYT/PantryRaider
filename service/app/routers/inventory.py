@@ -54,11 +54,13 @@ async def import_items(body: ImportRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/consume/{product_id}")
-async def consume_item(product_id: int, amount: float = 1.0):
-    """Mark stock as consumed in Grocy."""
+async def consume_item(product_id: int, amount: float = 1.0,
+                       location_id: int | None = None):
+    """Mark stock as consumed in Grocy, optionally from one location only."""
     grocy = GrocyClient()
     try:
-        return await grocy.consume_stock(product_id, amount)
+        return await grocy.consume_stock(product_id, amount,
+                                         location_id=location_id)
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -104,6 +106,8 @@ _REVERSED_SORTS = {"name_desc", "added_desc"}
 
 class MoveRequest(BaseModel):
     bucket: str  # any built-in or custom category key (grocy.move_product validates)
+    # Move only the stock at this Grocy location; omitted moves all of it.
+    from_location_id: int | None = None
 
 
 class EditRequest(BaseModel):
@@ -124,7 +128,8 @@ async def edit_item(product_id: int, body: EditRequest):
 
 @router.post("/move/{product_id}")
 async def move_item(product_id: int, body: MoveRequest, db: Session = Depends(get_db)):
-    """Move all stock of a product to a different storage location.
+    """Move all stock of a product to a different storage location, or only
+    the stock at ``from_location_id`` when the body names one.
 
     When the move crosses temperature natures (fridge to freezer, freezer to
     fridge, pantry to fridge, ...), the best-by date follows
@@ -148,7 +153,8 @@ async def move_item(product_id: int, body: MoveRequest, db: Session = Depends(ge
                     _to, _days)
 
         return await grocy.move_product(product_id, body.bucket,
-                                        propose_best_by=proposer)
+                                        propose_best_by=proposer,
+                                        from_location_id=body.from_location_id)
     except Exception as e:
         raise HTTPException(500, str(e))
 

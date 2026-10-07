@@ -383,6 +383,51 @@ def opened_amounts(stock: list[dict]) -> dict[int, float]:
     return out
 
 
+def _urgency(best_before_date: str | None, today: date) -> tuple[int | None, str]:
+    """(days_remaining, urgency bucket) for a best-by date. Pure."""
+    if not best_before_date:
+        return None, "unknown"
+    days_remaining = (date.fromisoformat(best_before_date) - today).days
+    if days_remaining < 0:
+        return days_remaining, "expired"
+    if days_remaining == 0:
+        return days_remaining, "today"
+    if days_remaining <= 3:
+        return days_remaining, "3d"
+    if days_remaining <= 7:
+        return days_remaining, "7d"
+    return days_remaining, "ok"
+
+
+def stock_by_location(stock_rows: list[dict]) -> dict[int, dict[str, dict]]:
+    """Product id -> location id -> {amount, amount_opened, best_before_date},
+    from the raw /objects/stock rows. Pure.
+
+    Each location's best-by is its earliest entry's, matching how /stock
+    reports a product's next due date. Rows without a product or a positive
+    amount are skipped.
+    """
+    out: dict[int, dict[str, dict]] = {}
+    for row in stock_rows or []:
+        try:
+            pid = int(row.get("product_id") or 0)
+            amount = float(row.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not pid or amount <= 0:
+            continue
+        loc = str(row.get("location_id") or "")
+        part = out.setdefault(pid, {}).setdefault(
+            loc, {"amount": 0.0, "amount_opened": 0.0, "best_before_date": None})
+        part["amount"] += amount
+        if str(row.get("open") or "0") not in ("0", "", "False", "false"):
+            part["amount_opened"] += amount
+        bbd = row.get("best_before_date")
+        if bbd and (part["best_before_date"] is None or bbd < part["best_before_date"]):
+            part["best_before_date"] = bbd
+    return out
+
+
 def _location_id(entry: dict) -> int:
     try:
         return int(entry.get("location_id") or 0)
@@ -620,14 +665,16 @@ class GrocyClient:
         })
 
     async def consume_stock(self, product_id: int, amount: float = 1.0,
-                            spoiled: bool = False) -> dict:
+                            spoiled: bool = False,
+                            location_id: int | None = None) -> dict:
         # ``spoiled`` is the difference between "we ate it" and "we threw it
         # out"; Grocy keeps it in the stock log, which is what the waste
         # insights read. Defaults to eaten so no existing caller changes.
-        return await self._post(f"/stock/products/{product_id}/consume", {
-            "amount": amount,
-            "spoiled": bool(spoiled),
-        })
+        # ``location_id`` limits the consume to one location's stock (#73).
+        body = {"amount": amount, "spoiled": bool(spoiled)}
+        if location_id:
+            body["location_id"] = int(location_id)
+        return await self._post(f"/stock/products/{product_id}/consume", body)
 
     async def open_stock(self, product_id: int, amount: float = 1.0) -> dict:
         """Mark one unit opened. Grocy then applies the product's
@@ -733,50 +780,54 @@ class GrocyClient:
             ts = row.get("row_created_timestamp") or row.get("purchased_date") or ""
             if pid and ts and ts > added.get(pid, ""):
                 added[pid] = ts
+        # /stock also reports one row per product under the product's default
+        # location, so stock kept in two places showed its whole total in one
+        # (#73). The raw rows carry the real location_id of every entry.
+        by_location = stock_by_location(stock_rows)
         today = date.today()
         result = []
         for entry in raw:
             product = entry.get("product") or {}
             name = product.get("name") or f"Product {entry.get('product_id', '?')}"
-            # Prefer the per-entry location_id; fall back to the product's default
-            loc_id = str(entry.get("location_id") or product.get("location_id") or "")
-            loc_name = locations.get(loc_id, "")
-            bucket = classify_location(loc_name)
-
-            bbd = entry.get("best_before_date")
-            if bbd:
-                d = date.fromisoformat(bbd)
-                days_remaining = (d - today).days
-                if days_remaining < 0:
-                    urgency = "expired"
-                elif days_remaining == 0:
-                    urgency = "today"
-                elif days_remaining <= 3:
-                    urgency = "3d"
-                elif days_remaining <= 7:
-                    urgency = "7d"
-                else:
-                    urgency = "ok"
-            else:
-                days_remaining = None
-                urgency = "unknown"
-
             pid = int(entry.get("product_id", 0))
             group_id = str(product.get("product_group_id") or "")
-            result.append({
+            total = float(entry.get("amount") or 0)
+            row = {
                 "product_id": pid,
                 "name": name,
-                "amount": float(entry.get("amount") or 0),
                 "unit": product.get("qu_unit_stock", {}).get("name") if product.get("qu_unit_stock") else None,
-                "best_before_date": bbd,
-                "days_remaining": days_remaining,
-                "urgency": urgency,
-                "location_name": loc_name,
-                "storage_bucket": bucket,
                 "category": groups.get(group_id, ""),
                 "added_date": added.get(pid),
-                "amount_opened": opened.get(pid, 0.0),
-            })
+                # The product's total across every location, for callers
+                # (the recipe matcher) that ask "is there enough of it".
+                "product_amount": total,
+            }
+            splits = by_location.get(pid)
+            if not splits or len(splits) < 2:
+                # Prefer the per-entry location_id; fall back to the product's
+                # default, and keep /stock's own amounts and best-by.
+                only = next(iter(splits)) if splits else None
+                splits = {only or str(entry.get("location_id")
+                                      or product.get("location_id") or ""): {
+                    "amount": total,
+                    "amount_opened": opened.get(pid, 0.0),
+                    "best_before_date": entry.get("best_before_date"),
+                }}
+            for loc_id, part in splits.items():
+                loc_name = locations.get(loc_id, "")
+                bbd = part["best_before_date"]
+                days_remaining, urgency = _urgency(bbd, today)
+                result.append({
+                    **row,
+                    "amount": part["amount"],
+                    "best_before_date": bbd,
+                    "days_remaining": days_remaining,
+                    "urgency": urgency,
+                    "location_id": int(loc_id) if loc_id.isdigit() else None,
+                    "location_name": loc_name,
+                    "storage_bucket": classify_location(loc_name),
+                    "amount_opened": part["amount_opened"],
+                })
         return result
 
     async def edit_product(self, product_id: int,
@@ -947,9 +998,14 @@ class GrocyClient:
         return entries, row
 
     async def move_product(self, product_id: int, bucket: str,
-                           propose_best_by=None) -> dict:
+                           propose_best_by=None,
+                           from_location_id: int | None = None) -> dict:
         """Transfer all stock of a product to the location for `bucket` and
         make that the product's default location.
+
+        ``from_location_id`` moves only the stock held at that one location
+        (#73: a product kept in two places is listed once per place). The
+        default location then changes only when no stock is left elsewhere.
 
         ``propose_best_by`` is an optional callable ``(old_best_by: date,
         from_bucket: str) -> date | None`` (see
@@ -1002,7 +1058,9 @@ class GrocyClient:
         # Each pass moves one whole row, so this only caps a Grocy that never
         # lets go of one.
         for _ in range(len(entries) + 10):
-            row = next((e for e in entries if _movable(e, to_id)), None)
+            row = next((e for e in entries if _movable(e, to_id)
+                        and (not from_location_id
+                             or _location_id(e) == int(from_location_id))), None)
             if row is None:
                 break
             from_id = int(row["location_id"])
@@ -1030,8 +1088,11 @@ class GrocyClient:
 
         # Entries without a location can't be transferred, but changing the
         # product's default location still re-buckets them on the dashboard.
-        await self._request("PUT", f"/objects/products/{product_id}",
-                            {"location_id": to_id})
+        # A one-location move leaves stock elsewhere on the old default.
+        if not from_location_id or not any(
+                _movable(e, to_id) for e in entries):
+            await self._request("PUT", f"/objects/products/{product_id}",
+                                {"location_id": to_id})
 
         # One transfer moves in one temperature direction, so every update
         # agrees; the earliest resulting date is the one the user will see
