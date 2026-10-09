@@ -283,8 +283,12 @@ function renderPanel(panelId, countId, items, bucket) {
       <button class="btn btn-outline-secondary btn-icon" title="Mark one ${esc(item.name)} opened"
               onclick="markOpened(${item.product_id}, '${esc(item.name)}')">
         <i class="bi bi-box2"></i>
+      </button>
+      <button class="btn btn-outline-secondary btn-icon" title="Use one ${esc(item.name)}"
+              onclick="useOne(${item.product_id}, '${esc(item.name)}')">
+        <i class="bi bi-dash-circle"></i>
       </button>` : ''}
-      <button class="btn btn-outline-secondary btn-icon" title="Mark consumed"
+      <button class="btn btn-outline-secondary btn-icon" title="Mark all ${esc(item.name)} consumed"
               onclick="consume(${item.product_id}, ${item.amount}, '${esc(item.name)}')">
         <i class="bi bi-check2"></i>
       </button>
@@ -494,6 +498,23 @@ async function markOpened(productId, name) {
     await loadDashboard();
   } catch(e) {
     showToast(`Could not mark ${name} opened: ${e.message}`, true);
+  }
+}
+
+// Use one unit (the Use stock scan, without a barcode). The ✓ button next to
+// it still consumes the whole amount; reloading shows the new count, and the
+// row drops out once the last one is used.
+async function useOne(productId, name) {
+  try {
+    const r = await fetch(`/inventory/consume/${productId}?amount=1`, { method: 'POST' });
+    if (!r.ok) {
+      const detail = (await r.json().catch(() => ({}))).detail;
+      throw new Error(detail || r.statusText);
+    }
+    showToast(`✓ Used one ${name}`);
+    await loadDashboard();
+  } catch(e) {
+    showToast(`Could not use one ${name}: ${e.message}`, true);
   }
 }
 
