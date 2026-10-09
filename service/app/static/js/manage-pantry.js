@@ -55,6 +55,38 @@ const MODE_LABELS = {
 };
 let currentMode = 'inventory';
 
+// The status line of the pane currently showing, so camera and scan feedback
+// lands where the user is looking whatever the mode.
+const SCAN_STATUS_IDS = {
+  inventory: 'barcode-status', consume: 'consume-status',
+  shopping: 'shopping-status', audit: 'audit-scan-status',
+};
+function scanStatusId() {
+  return SCAN_STATUS_IDS[currentMode] || 'barcode-status';
+}
+
+// The camera card is authored inside the Stock up pane, but every mode scans
+// (a phone has no other scanner), so it follows the active pane: back to its
+// own slot for Stock up, top of the pane otherwise. A running camera is
+// stopped first, since moving its video element would freeze it.
+let cameraHome = null;
+function placeCameraCard(mode) {
+  const card = document.getElementById('camera-scan-card');
+  if (!card) return;
+  if (!cameraHome) cameraHome = { parent: card.parentNode, next: card.nextSibling };
+  const target = mode === 'inventory' ? cameraHome.parent
+    : document.getElementById('mode-pane-' + mode);
+  if (!target || card.parentNode === target) return;
+  if (scanner) stopScanner();
+  if (mode === 'inventory') {
+    card.classList.remove('mb-3');
+    target.insertBefore(card, cameraHome.next);
+  } else {
+    card.classList.add('mb-3');
+    target.insertBefore(card, target.firstChild);
+  }
+}
+
 function applyMode(mode) {
   if (!MODES.includes(mode)) mode = 'inventory';
   const changed = mode !== currentMode;
@@ -68,6 +100,7 @@ function applyMode(mode) {
     }
     if (pane) pane.classList.toggle('d-none', m !== mode);
   });
+  placeCameraCard(mode);
   // Bounce the tile that just became active so a mode change (from a NeoKey,
   // the deck, or a tap) is unmistakable on the panel; restart the animation if
   // one is mid-flight so rapid presses each register.
@@ -261,10 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
 async function submitScan(code) {
   code = (code || '').trim();
   if (!code) return;
-  const statusId = {
-    inventory: 'barcode-status', consume: 'consume-status',
-    shopping: 'shopping-status', audit: 'audit-scan-status',
-  }[currentMode] || 'barcode-status';
+  const statusId = scanStatusId();
   const statusEl = document.getElementById(statusId);
   if (statusEl) showStatus(statusId, '<span class="spinner-border spinner-border-sm me-1"></span>Working...', 'info');
   let result;
@@ -290,10 +320,7 @@ async function submitScan(code) {
 function handleScanResult(code, result) {
   // A grocycode label scan consumes in ANY mode, so its feedback targets the
   // pane the user is actually looking at, not just the consume pane.
-  const paneStatusId = {
-    inventory: 'barcode-status', consume: 'consume-status',
-    shopping: 'shopping-status', audit: 'audit-scan-status',
-  }[currentMode] || 'barcode-status';
+  const paneStatusId = scanStatusId();
   switch (result.status) {
     case 'queued':
     case 'merged':
@@ -330,10 +357,7 @@ function handleScanResult(code, result) {
       refreshAuditSummary();
       break;
     case 'rejected':
-      showStatus({
-        inventory: 'barcode-status', consume: 'consume-status',
-        shopping: 'shopping-status', audit: 'audit-scan-status',
-      }[currentMode] || 'barcode-status', 'That scan looked like several barcodes run together; try again.', 'warning');
+      showStatus(scanStatusId(), 'That scan looked like several barcodes run together; try again.', 'warning');
       break;
     default:
       showInventoryResult(result);
@@ -569,7 +593,7 @@ async function decodeBarcodePhoto(input) {
   const file = input.files[0];
   if (!file) return;
   input.value = '';
-  showStatus('barcode-status', '<span class="spinner-border spinner-border-sm me-1"></span>Decoding barcode...', 'info');
+  showStatus(scanStatusId(), '<span class="spinner-border spinner-border-sm me-1"></span>Decoding barcode...', 'info');
   try {
     await ensureQrLib();
     // Same format hints as the live scanner: fewer formats to try means a
@@ -586,7 +610,7 @@ async function decodeBarcodePhoto(input) {
     const result = await decoder.scanFileV2(file, /* showImage */ false);
     await submitScan(result.decodedText);
   } catch(e) {
-    showStatus('barcode-status',
+    showStatus(scanStatusId(),
       'No barcode found in photo. Get closer, fill the frame with the barcode, and avoid glare.', 'warning');
   }
 }
@@ -597,7 +621,7 @@ async function startScanner() {
   try {
     await ensureQrLib();
   } catch (e) {
-    showStatus('barcode-status', 'The camera scanner could not load. Use the barcode box or a scanner instead.', 'warning');
+    showStatus(scanStatusId(), 'The camera scanner could not load. Use the barcode box or a scanner instead.', 'warning');
     document.getElementById('startScanBtn').classList.remove('d-none');
     document.getElementById('stopScanBtn').classList.add('d-none');
     return;
@@ -654,7 +678,7 @@ async function startScanner() {
       }
     } catch (e) { /* capability probing is best-effort */ }
   }).catch(err => {
-    showStatus('barcode-status', 'Camera error: ' + err, 'danger');
+    showStatus(scanStatusId(), 'Camera error: ' + err, 'danger');
     stopScanner();
   });
 }
