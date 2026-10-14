@@ -487,6 +487,54 @@ def _row_after_date_write(entries: list[dict], from_id: int,
     return own
 
 
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def qu_conversion_factor(conversions: list[dict], product_id: int,
+                         from_qu: int, to_qu: int) -> float | None:
+    """How many ``to_qu`` make one ``from_qu`` for ``product_id``. Pure.
+
+    ``conversions`` are Grocy quantity_unit_conversions rows (from_qu_id,
+    to_qu_id, factor, product_id). A product's own conversion beats a global
+    one (no product_id), as in Grocy; a conversion written the other way round
+    is used inverted. None when the two units are not linked at all. The
+    resolved view Grocy 4 also offers carries the same columns, already
+    chained, so it can be passed in unchanged.
+    """
+    if from_qu == to_qu:
+        return 1.0
+    for scope in (product_id, None):
+        for c in conversions or []:
+            if _int_or_none(c.get("product_id")) != scope:
+                continue
+            src = _int_or_none(c.get("from_qu_id"))
+            dst = _int_or_none(c.get("to_qu_id"))
+            try:
+                factor = float(c.get("factor") or 0)
+            except (TypeError, ValueError):
+                continue
+            if factor <= 0:
+                continue
+            if (src, dst) == (from_qu, to_qu):
+                return factor
+            if (src, dst) == (to_qu, from_qu):
+                return 1.0 / factor
+    return None
+
+
+def unit_matches(unit: dict, name: str) -> bool:
+    """True when ``name`` is this Grocy quantity unit's singular or plural. Pure."""
+    low = (name or "").strip().lower()
+    return bool(low) and low in (
+        (unit.get("name") or "").strip().lower(),
+        (unit.get("name_plural") or "").strip().lower(),
+    )
+
+
 # Shared connection pool for the life of the app
 _client = httpx.AsyncClient(timeout=15.0)
 
@@ -1136,6 +1184,109 @@ class GrocyClient:
         await self._post("/objects/product_barcodes",
                          {"product_id": product_id, "barcode": barcode})
         return True
+
+    async def _product_conversions(self, product_id: int) -> list[dict]:
+        """Unit conversions that apply to ``product_id``.
+
+        Grocy 4 resolves chained and default conversions in a view; older
+        releases only have the plain table, which qu_conversion_factor reads
+        directly (product-specific, then global)."""
+        try:
+            return await self._get(
+                "/objects/quantity_unit_conversions_resolved"
+                f"?query%5B%5D=product_id%3D{product_id}")
+        except GrocyError:
+            return await self.get_unit_conversions()
+
+    async def find_barcode(self, barcode: str) -> dict | None:
+        """The Grocy product registered under ``barcode``, or None.
+
+        Reads Grocy's own barcode table, so a product that was already set up
+        in Grocy (for example before Pantry Raider was installed) is recognized
+        with its name and units instead of being looked up again elsewhere
+        (issue #65). The result carries the barcode's own unit and amount (a
+        case barcode can mean "1 Pack") and ``factor``: how many stock units
+        one of that unit holds, or None when Grocy has no conversion for it.
+        """
+        barcode = (barcode or "").strip()
+        if not barcode:
+            return None
+        rows = await self._get(
+            f"/objects/product_barcodes?query%5B%5D=barcode%3D{barcode}")
+        row = next((r for r in rows or [] if r.get("barcode") == barcode), None)
+        product_id = _int_or_none(row and row.get("product_id"))
+        if not product_id:
+            return None
+        product = await self._get(f"/objects/products/{product_id}")
+        if not product or not product.get("name"):
+            return None
+        units = {int(u["id"]): u for u in
+                 await self._cached_list("/objects/quantity_units")}
+        stock_qu = _int_or_none(product.get("qu_id_stock"))
+        barcode_qu = _int_or_none(row.get("qu_id")) or stock_qu
+        try:
+            amount = float(row.get("amount") or 0) or 1.0
+        except (TypeError, ValueError):
+            amount = 1.0
+        factor = None
+        if barcode_qu and stock_qu:
+            factor = qu_conversion_factor(
+                await self._product_conversions(product_id),
+                product_id, barcode_qu, stock_qu)
+        if factor is None:
+            # No way to turn the barcode's unit into stock units: fall back
+            # to the stock unit so the amount is never silently scaled wrong.
+            barcode_qu, factor = stock_qu, 1.0
+        location = group = ""
+        loc_id = _int_or_none(product.get("location_id"))
+        if loc_id:
+            location = next((loc["name"] for loc in
+                             await self._cached_list("/objects/locations")
+                             if _int_or_none(loc.get("id")) == loc_id), "")
+        group_id = _int_or_none(product.get("product_group_id"))
+        if group_id:
+            group = next((g["name"] for g in
+                          await self._cached_list("/objects/product_groups")
+                          if _int_or_none(g.get("id")) == group_id), "")
+        return {
+            "product_id": product_id,
+            "name": product["name"],
+            "unit": (units.get(barcode_qu) or {}).get("name") or "item",
+            "amount": amount,
+            "factor": factor,
+            "location": location,
+            "product_group": group,
+            "default_best_before_days": _int_or_none(
+                product.get("default_best_before_days")) or 0,
+        }
+
+    async def stock_amount(self, product_id: int, quantity: float,
+                           unit: str) -> float:
+        """``quantity`` of ``unit`` expressed in the product's stock unit.
+
+        ``unit`` is a Grocy quantity unit name (singular or plural). A unit
+        Grocy does not know, or one with no conversion for this product, is
+        taken as the stock unit itself, which is what the add used before."""
+        product = await self._get(f"/objects/products/{product_id}")
+        stock_qu = _int_or_none(product.get("qu_id_stock"))
+        unit_row = next((u for u in await self._cached_list("/objects/quantity_units")
+                         if unit_matches(u, unit)), None)
+        unit_qu = _int_or_none(unit_row and unit_row.get("id"))
+        if not stock_qu or not unit_qu:
+            return quantity
+        factor = qu_conversion_factor(
+            await self._product_conversions(product_id),
+            product_id, unit_qu, stock_qu)
+        return quantity * factor if factor else quantity
+
+    async def add_to_product(self, product_id: int, item: FoodItem) -> dict:
+        """Stock ``item`` onto an existing product, converting its unit.
+
+        Used for a scan Grocy already recognized (issue #65): the stock lands
+        on that exact product, never on a new one created by name."""
+        amount = await self.stock_amount(product_id, item.quantity, item.unit)
+        await self.add_stock(product_id, item.model_copy(update={"quantity": amount}))
+        return {"product_id": product_id, "name": item.name, "amount": amount}
 
     async def import_item(self, item: FoodItem) -> dict:
         storage_name = _STORAGE_LABEL[item.storage_type.value]
