@@ -150,8 +150,10 @@ def test_build_corrections_counted_under_and_over():
         _exp("Eggs", seen=True, scanned_count=3, amount=1, product_id=2),
     ])
     assert out == [
-        {"product_id": 1, "name": "Milk", "counted": 1.0, "expected": 2.0},
-        {"product_id": 2, "name": "Eggs", "counted": 3.0, "expected": 1.0},
+        {"product_id": 1, "name": "Milk", "counted": 1.0, "expected": 2.0,
+         "set_to": 1.0},
+        {"product_id": 2, "name": "Eggs", "counted": 3.0, "expected": 1.0,
+         "set_to": 3.0},
     ]
 
 
@@ -181,7 +183,8 @@ def test_build_corrections_a_true_counted_zero_would_zero():
     out = audit.build_corrections([
         _exp(seen=True, scanned_count=0, amount=2),
     ])
-    assert out == [{"product_id": 1, "name": "Milk", "counted": 0.0, "expected": 2.0}]
+    assert out == [{"product_id": 1, "name": "Milk", "counted": 0.0, "expected": 2.0,
+                    "set_to": 0.0}]
 
 
 def test_build_corrections_skips_unknown_amount_and_missing_product_id():
@@ -605,3 +608,24 @@ def test_satellite_forwards_apply_to_the_main_server(sat_client):
     assert r.status_code == 200
     assert r.json()["summary"] == "2 corrected"
     assert r.json()["from"] == "main-server"
+
+
+# --- Products kept in several locations (#73) --------------------------------
+
+def test_all_areas_audit_merges_a_product_split_across_locations():
+    audit.start(audit.ALL_AREAS_LABEL, [
+        {"name": "Cool Blue", "amount": 4.0, "product_amount": 7.0, "product_id": 7},
+        {"name": "Cool Blue", "amount": 3.0, "product_amount": 7.0, "product_id": 7},
+    ])
+    exp = audit.status()["expected"]
+    assert len(exp) == 1 and exp[0]["amount"] == 7.0
+
+
+def test_location_correction_keeps_stock_held_elsewhere():
+    """Counting 2 in the basement (expected 4 of a 7 total) sets Grocy's
+    product-wide amount to 5, leaving the kitchen's 3 alone."""
+    [c] = audit.build_corrections([
+        {"name": "Cool Blue", "amount": 4.0, "product_amount": 7.0,
+         "product_id": 7, "seen": True, "scanned_count": 2},
+    ])
+    assert c["counted"] == 2.0 and c["set_to"] == 5.0

@@ -269,16 +269,32 @@ def test_consume_redirect_names_the_product(client, monkeypatch):
 
     consumed = []
 
-    async def _consume(self, product_id, amount=1.0):
-        consumed.append((product_id, amount))
+    async def _consume(self, product_id, amount=1.0, spoiled=False, location_id=None):
+        consumed.append((product_id, amount, location_id))
         return {}
 
     monkeypatch.setattr(GrocyClient, "consume_stock", _consume)
     r = client.post("/ui/consume/42", data={"amount": "2", "name": "Greek Yogurt"},
                     follow_redirects=False)
     assert r.status_code in (302, 303, 307)
-    assert consumed == [(42, 2.0)]
+    assert consumed == [(42, 2.0, None)]
     assert "Greek%20Yogurt%20marked%20as%20consumed" in r.headers["location"]
+
+
+def test_consume_from_the_inventory_page_takes_the_rows_location(client, monkeypatch):
+    """A product kept in two places is consumed from the row tapped (#73)."""
+    from app.services.grocy import GrocyClient
+
+    consumed = []
+
+    async def _consume(self, product_id, amount=1.0, spoiled=False, location_id=None):
+        consumed.append((product_id, amount, location_id))
+        return {}
+
+    monkeypatch.setattr(GrocyClient, "consume_stock", _consume)
+    client.post("/ui/consume/42", data={"amount": "3", "location_id": "2"},
+                follow_redirects=False)
+    assert consumed == [(42, 3.0, 2)]
 
 
 def test_expiring_use_it_up_button_copy(client):
