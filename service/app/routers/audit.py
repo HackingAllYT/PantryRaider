@@ -183,7 +183,7 @@ async def audit_apply(request: Request):
     failed: list[dict] = []
     for c in corrections:
         try:
-            await client.set_stock_amount(c["product_id"], c["counted"])
+            await client.set_stock_amount(c["product_id"], c["set_to"])
             applied.append({"name": c["name"], "amount": c["counted"],
                             "was": c["expected"]})
         except GrocyError as e:

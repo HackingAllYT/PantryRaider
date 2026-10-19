@@ -49,3 +49,18 @@ def test_page_follows_mode_changed_elsewhere(new_page, app_server):
     finally:
         page.request.post(app_server + "/pending/scanner-mode",
                           data={"mode": "inventory"})
+
+
+def test_camera_card_follows_every_mode(new_page, app_server):
+    # A phone's only scanner is the camera, so the Camera Scanner card must be
+    # usable in every mode, not just Stock up where it is authored (#111).
+    page = new_page("/ui/add")
+    try:
+        for mode in ("consume", "shopping", "audit", "inventory"):
+            page.click(f"#mode-tab-{mode}")
+            assert _wait_for_mode(page, app_server, mode) == mode
+            assert page.locator(f"#mode-pane-{mode} #camera-scan-card").count() == 1
+            assert page.locator("#camera-scan-card").is_visible()
+    finally:
+        page.request.post(app_server + "/pending/scanner-mode",
+                          data={"mode": "inventory"})

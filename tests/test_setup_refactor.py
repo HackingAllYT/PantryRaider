@@ -167,6 +167,9 @@ PINNED = {
             # Added after the pin: the 12/24-hour clock format select in the
             # Date & time card (FoodAssistant-v3ui).
             'clock_format',
+            # Added after the pin: the measurement units select in the same
+            # card (public issue #92).
+            'unit_system',
             'timezone', 'totp-code', 'tunnel_mode_cloudflare', 'tunnel_mode_off',
             'tunnel_token', 'ui_theme', 'usb_backup_interval_hours',
             'vision_provider',
@@ -429,6 +432,9 @@ PINNED = {
             # Added after the pin: the 12/24-hour clock format select in the
             # Date & time card (FoodAssistant-v3ui).
             'clock_format',
+            # Added after the pin: the measurement units select in the same
+            # card (public issue #92).
+            'unit_system',
             'themealdb_api_key', 'timer_chips', 'timezone', 'totp-code', 'tunnel_mode_cloudflare',
             'tunnel_mode_off', 'tunnel_token', 'ui_scale',
             # Added after the pin: the chosen Forager web address (subdomain)

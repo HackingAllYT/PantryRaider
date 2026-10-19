@@ -44,12 +44,20 @@ function renderPanel(panelId, countId, items, bucket) {
     el.innerHTML = '<div class="panel-empty"><i class="bi bi-check-circle text-success me-1"></i>Empty</div>';
     return;
   }
-  el.innerHTML = items.map(item => `
-    <div class="item-row" id="row-${item.product_id}" draggable="true"
-         data-product-id="${item.product_id}" data-bucket="${bucket}" data-name="${PR.esc(item.name)}"
+  el.innerHTML = items.map(item => {
+    const loc = item.location_id || null;
+    // The row's own Grocy location, unless the panel name already says it.
+    const showLoc = item.location_name
+      && item.location_name.trim().toLowerCase() !== (BUCKET_LABELS[bucket] || '').trim().toLowerCase();
+    const where = showLoc ? item.location_name : '';
+    return `
+    <div class="item-row" id="${rowId(item.product_id, loc)}" draggable="true"
+         data-product-id="${item.product_id}" data-location-id="${loc || ''}"
+         data-bucket="${bucket}" data-name="${PR.esc(item.name)}"
          data-on-dragstart="dragStart(event)" data-on-dragend="dragEnd(event)">
       <div class="item-name">
         <div class="item-name-text" title="${PR.esc(item.name)}${item.added_date ? ', added ' + item.added_date.slice(0,10) : ''}">${PR.esc(item.name)}</div>
+        ${showLoc ? `<div class="item-location"><i class="bi bi-geo-alt me-1"></i>${PR.esc(item.location_name)}</div>` : ''}
       </div>
       ${showAdded && item.added_date ? `<span class="item-qty">${item.added_date.slice(0,10)}</span>` : ''}
       <span class="item-qty">${item.amount % 1 === 0 ? item.amount : item.amount.toFixed(1)}${item.unit ? ' ' + PR.esc(item.unit) : ''}</span>
@@ -63,17 +71,22 @@ function renderPanel(panelId, countId, items, bucket) {
       </button>
       <button class="btn btn-outline-secondary btn-icon" title="Move to another location"
               aria-label="Move ${PR.esc(item.name)} to another location"
-              data-on-click="openMoveModal(${item.product_id}, ${PR.escAttrJs(item.name)})">
+              data-on-click="openMoveModal(${item.product_id}, ${PR.escAttrJs(item.name)}, ${loc})">
         <i class="bi bi-arrow-left-right"></i>
       </button>
       ${item.amount > 0 ? `
       <button class="btn btn-outline-secondary btn-icon" title="Mark one ${PR.esc(item.name)} opened"
               data-on-click="markOpened(${item.product_id}, ${PR.escAttrJs(item.name)})">
         <i class="bi bi-box2"></i>
+      </button>
+      <button class="btn btn-outline-secondary btn-icon" title="Use one ${PR.esc(item.name)}"
+              aria-label="Use one ${PR.esc(item.name)}"
+              data-on-click="useOne(${item.product_id}, ${PR.escAttrJs(item.name)}, ${loc})">
+        <i class="bi bi-dash-circle"></i>
       </button>` : ''}
-      <button class="btn btn-outline-secondary btn-icon" title="Mark consumed"
+      <button class="btn btn-outline-secondary btn-icon" title="Mark all ${PR.esc(item.name)} consumed"
               aria-label="Mark ${PR.esc(item.name)} consumed"
-              data-on-click="consume(${item.product_id}, ${item.amount}, ${PR.escAttrJs(item.name)})">
+              data-on-click="consume(${item.product_id}, ${item.amount}, ${PR.escAttrJs(item.name)}, ${loc}, ${PR.escAttrJs(where)})">
         <i class="bi bi-check2"></i>
       </button>
       ${PRINTING_ENABLED ? `
@@ -84,7 +97,14 @@ function renderPanel(panelId, countId, items, bucket) {
       </button>` : ''}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+// A product kept in two Grocy locations has one row per location, so a row is
+// addressed by product and location together.
+function rowId(productId, locationId) {
+  return `row-${productId}-${locationId || 'none'}`;
 }
 
 // Item lookup map (keyed by product_id) for pre-filling modals
@@ -144,12 +164,13 @@ async function saveEdit() {
 }
 
 // Drag & Drop
-let dragged = null;  // { productId, fromBucket, name }
+let dragged = null;  // { productId, locationId, fromBucket, name }
 
 function dragStart(e) {
   const row = e.currentTarget;
   dragged = {
     productId: parseInt(row.dataset.productId),
+    locationId: parseInt(row.dataset.locationId) || null,
     fromBucket: row.dataset.bucket,
     name: row.dataset.name,
   };
@@ -182,16 +203,16 @@ async function dropItem(e) {
   const panel = e.currentTarget;
   panel.classList.remove('drop-target');
   if (!dragged || panel.dataset.bucket === dragged.fromBucket) return;
-  const { productId, name } = dragged;
+  const { productId, locationId, name } = dragged;
   dragged = null;
-  await moveItem(productId, panel.dataset.bucket, name);
+  await moveItem(productId, panel.dataset.bucket, name, locationId);
 }
 
 // Move via modal (touch devices)
-let moveTarget = null;  // { productId, name }
+let moveTarget = null;  // { productId, name, locationId }
 
-function openMoveModal(productId, name) {
-  moveTarget = { productId, name };
+function openMoveModal(productId, name, locationId) {
+  moveTarget = { productId, name, locationId };
   document.getElementById('moveModalName').textContent = name;
   new bootstrap.Modal(document.getElementById('moveModal')).show();
 }
@@ -199,17 +220,20 @@ function openMoveModal(productId, name) {
 async function moveFromModal(bucket) {
   bootstrap.Modal.getInstance(document.getElementById('moveModal')).hide();
   if (!moveTarget) return;
-  const { productId, name } = moveTarget;
+  const { productId, name, locationId } = moveTarget;
   moveTarget = null;
-  await moveItem(productId, bucket, name);
+  await moveItem(productId, bucket, name, locationId);
 }
 
-async function moveItem(productId, bucket, name) {
+async function moveItem(productId, bucket, name, locationId) {
   try {
+    // Only this row's stock moves; the same product kept elsewhere stays put.
+    const body = { bucket };
+    if (locationId) body.from_location_id = locationId;
     const r = await fetch(`inventory/move/${productId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bucket }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(await prErrText(r));
     // Crossing temperature natures adjusts the best-by (freezing extends,
@@ -287,23 +311,44 @@ async function markOpened(productId, name) {
   }
 }
 
-async function consume(productId, amount, name) {
+// Use one unit, the way a Use stock scan does, for an item without a barcode.
+// The check button next to it still consumes the row's whole amount; the
+// reload shows the new count, and the row goes once the last one is used.
+async function useOne(productId, name, locationId) {
+  try {
+    let url = `inventory/consume/${productId}?amount=1`;
+    if (locationId) url += `&location_id=${encodeURIComponent(locationId)}`;
+    const r = await fetch(url, { method: 'POST' });
+    if (!r.ok) {
+      const detail = (await r.json().catch(() => ({}))).detail;
+      throw new Error(detail || r.statusText);
+    }
+    showToast(`✓ Used one ${name}`);
+    await loadDashboard();
+  } catch(e) {
+    showToast(`Could not use one ${name}: ${e.message}`, true);
+  }
+}
+
+async function consume(productId, amount, name, locationId, where) {
   // One tap takes the whole amount out of stock and there is no undo, so ask
-  // first (the Expiring page asks the same question).
-  const ok = await PR.confirmBox(`Mark all ${name} as consumed? This removes it from your stock.`,
+  // first (the Expiring page asks the same question). A row for one of several
+  // places only takes that place's stock, and the question says which.
+  const what = where ? `${name} in ${where}` : name;
+  const ok = await PR.confirmBox(`Mark all ${what} as consumed? This removes it from your stock.`,
                                  { ok: 'Mark consumed' });
   if (!ok) return;
   try {
     // The JSON endpoint, so a refusal from Grocy reaches the toast instead of
     // hiding behind the page redirect the Expiring form uses.
-    const r = await fetch(
-      `inventory/consume/${productId}?amount=${encodeURIComponent(amount)}`,
-      { method: 'POST' });
+    let url = `inventory/consume/${productId}?amount=${encodeURIComponent(amount)}`;
+    if (locationId) url += `&location_id=${encodeURIComponent(locationId)}`;
+    const r = await fetch(url, { method: 'POST' });
     if (!r.ok) {
       const detail = (await r.json().catch(() => ({}))).detail;
       throw new Error(detail || r.statusText);
     }
-    const row = document.getElementById(`row-${productId}`);
+    const row = document.getElementById(rowId(productId, locationId));
     if (row) row.remove();
     showToast(`✓ Consumed: ${name}`);
     // Update panel count

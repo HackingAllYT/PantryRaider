@@ -304,7 +304,9 @@ def _stock_covers_amount(ing: dict, item: dict,
     if not item.get("product_id") or not str(item.get("unit") or "").strip():
         return None
     try:
-        amount = float(item.get("amount"))
+        # A product kept in several locations has one stock row per location;
+        # what covers the recipe is the product's total (#73).
+        amount = float(item.get("product_amount", item.get("amount")))
     except (TypeError, ValueError):
         return None
     factor = conversion_factor(item.get("product_id"), ing_unit,
@@ -394,6 +396,7 @@ def classify_recipes(recipes: list[dict], stock: list[dict],
                         "perishable": _is_perishable(s),
                         "product_id": s.get("product_id"),
                         "amount": s.get("amount"),
+                        "product_amount": s.get("product_amount", s.get("amount")),
                         "unit": s.get("unit")})
 
     soon = settings.expiring_soon_days

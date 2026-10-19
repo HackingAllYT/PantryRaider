@@ -36,10 +36,13 @@ anything.
 
 ## Language and units
 
-The interface is English only for now, and measurements default to US units
-(Fahrenheit for weather and thermometers). The app starts on US Eastern time.
-Units and the timezone are both yours to change in Settings, and a Raspberry
-Pi appliance picks up the timezone from the device during setup.
+The interface is English only for now, and measurements default to US units.
+Choose Metric under Settings, Advanced, Date, time & units, and the Kitchen
+Guide and the converter lead with grams, milliliters and Celsius, and recipes
+the AI writes for you use them too. The weather page has its own Fahrenheit or
+Celsius switch. The app starts on US Eastern time; change the timezone in the
+same place, and a Raspberry Pi appliance picks it up from the device during
+setup.
 
 ## Where to go next
 

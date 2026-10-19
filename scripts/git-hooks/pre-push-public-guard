@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refuse a push of the development history to the public repo. The public repo
-# only ever carries clean snapshots: single root commits that
-# scripts/sync-public.sh builds with the private files stripped. Pushing a
+# only ever carries clean snapshots: commits that scripts/sync-public.sh builds
+# with the private files stripped, each one a child of the snapshot before it. Pushing a
 # normal branch there would publish the full development history. Installed
 # into the active pre-push hook by scripts/install-git-hooks.sh.
 #
@@ -24,17 +24,18 @@ if ! printf '%s\n' "$remote_url" \
   exit 0
 fi
 
-# A clean snapshot peels to a commit with no parents whose tree holds none of
-# the private files. A branch delete (all-zero sha) is not one.
+# A clean snapshot peels to a commit where neither it nor anything in its
+# history holds a private file. Every dev commit carries the agent files, so a
+# dev branch fails on its first commit. A branch delete (all-zero sha) is not
+# a snapshot.
 is_snapshot() {
-  local commit p
+  local commit c
   commit="$(git rev-parse -q --verify "$1^{commit}" 2>/dev/null)" || return 1
-  [ "$(git rev-list --count --max-count=2 "$commit")" = "1" ] || return 1
-  for p in AGENTS.md CLAUDE.md .beads .agents .claude .codex; do
-    if git cat-file -e "$commit:$p" 2>/dev/null; then
+  while read -r c; do
+    if [ -n "$(git ls-tree --name-only "$c" -- AGENTS.md CLAUDE.md .beads .agents .claude .codex)" ]; then
       return 1
     fi
-  done
+  done < <(git rev-list "$commit")
   return 0
 }
 

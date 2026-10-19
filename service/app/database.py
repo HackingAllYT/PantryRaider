@@ -324,10 +324,14 @@ _COLUMN_ADDITIONS: dict[str, list[tuple[str, str]]] = {
     # changes the date, so the commit can learn from the correction.
     # FoodAssistant-x61t: fast-ack background enrichment flag (1 while the
     # name lookup is still running after a queued scan).
+    # Issue #65: the Grocy product a scanned barcode already belongs to, and
+    # how much one scan of that barcode adds.
     "pending_items": [("best_by_source", "VARCHAR"),
                       ("suggested_best_by", "VARCHAR"),
                       ("suggested_source", "VARCHAR"),
-                      ("enriching", "INTEGER")],
+                      ("enriching", "INTEGER"),
+                      ("grocy_product_id", "INTEGER"),
+                      ("scan_amount", "FLOAT")],
     # FoodAssistant-v7gj: cook time alongside the existing prep/total time.
     "recipes": [("cook_time", "VARCHAR")],
     # FoodAssistant-zq7k: ingredient section headings (grouped recipes). NULL on

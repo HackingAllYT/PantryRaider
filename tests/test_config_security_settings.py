@@ -94,7 +94,7 @@ def test_withheld_and_cosmetic_lists():
         "ollama_base_url", "themealdb_api_key", "spoonacular_api_key",
         "streamdeck_ha_token", "grocy_api_key", "mealie_api_key"}
     assert set(UNSIGNED_COSMETIC_FIELDS) == {
-        "ui_theme", "clock_format", "streamdeck_weather_location",
+        "ui_theme", "clock_format", "unit_system", "streamdeck_weather_location",
         "streamdeck_weather_units", "perishable_days", "expiring_soon_days",
         "suggest_per_tier"}
     # The server decides per requester, so the relayed credentials stay

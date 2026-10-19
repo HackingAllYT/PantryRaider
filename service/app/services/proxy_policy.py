@@ -110,8 +110,8 @@ def upstream_path(segments: list[str]) -> str:
 # one entry per alternative.
 
 _GROCY_OBJECTS_READ = ("locations,product_groups,products,quantity_units,"
-                       "quantity_unit_conversions,shopping_lists,shopping_list,"
-                       "product_barcodes,stock,stock_log")
+                       "quantity_unit_conversions,quantity_unit_conversions_resolved,"
+                       "shopping_lists,shopping_list,product_barcodes,stock,stock_log")
 _GROCY_OBJECTS_CREATE = ("locations,product_groups,quantity_units,products,"
                          "product_barcodes,shopping_lists,shopping_list")
 
@@ -119,6 +119,9 @@ _GROCY_ALLOW = [
     ("GET", "api/stock"),
     ("GET", "api/system/info"),
     ("GET", "api/stock/products/ID/entries"),
+    # One product's own row: its stock unit and default location, read when a
+    # scanned barcode Grocy already knows is stocked onto it.
+    ("GET", "api/objects/products/ID"),
     ("GET", "api/objects/{%s}" % _GROCY_OBJECTS_READ),
     ("POST", "api/objects/{%s}" % _GROCY_OBJECTS_CREATE),
     ("POST", "api/stock/products/ID/{add,consume,open,inventory,transfer}"),

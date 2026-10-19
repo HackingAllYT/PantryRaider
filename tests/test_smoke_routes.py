@@ -270,16 +270,32 @@ def test_consume_redirect_names_the_product(client, monkeypatch):
 
     consumed = []
 
-    async def _consume(self, product_id, amount=1.0):
-        consumed.append((product_id, amount))
+    async def _consume(self, product_id, amount=1.0, spoiled=False, location_id=None):
+        consumed.append((product_id, amount, location_id))
         return {}
 
     monkeypatch.setattr(GrocyClient, "consume_stock", _consume)
     r = client.post("/ui/consume/42", data={"amount": "2", "name": "Greek Yogurt"},
                     follow_redirects=False)
     assert r.status_code in (302, 303, 307)
-    assert consumed == [(42, 2.0)]
+    assert consumed == [(42, 2.0, None)]
     assert "Greek%20Yogurt%20marked%20as%20consumed" in r.headers["location"]
+
+
+def test_consume_from_the_inventory_page_takes_the_rows_location(client, monkeypatch):
+    """A product kept in two places is consumed from the row tapped (#73)."""
+    from app.services.grocy import GrocyClient
+
+    consumed = []
+
+    async def _consume(self, product_id, amount=1.0, spoiled=False, location_id=None):
+        consumed.append((product_id, amount, location_id))
+        return {}
+
+    monkeypatch.setattr(GrocyClient, "consume_stock", _consume)
+    client.post("/ui/consume/42", data={"amount": "3", "location_id": "2"},
+                follow_redirects=False)
+    assert consumed == [(42, 3.0, 2)]
 
 
 def test_expiring_use_it_up_button_copy(client):
@@ -1014,3 +1030,55 @@ def test_old_in_progress_link_lands_on_the_current_recipe_page(client):
     from urllib.parse import urljoin
     assert urljoin("http://pr.local/ui/recipes-in-progress", r.headers["location"]) \
         == "http://pr.local/ui/current-recipe"
+
+
+def test_kitchen_guide_leads_with_metric_when_chosen(client, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "unit_system", "metric")
+    r = client.get("/ui/kitchen-guide")
+    assert r.status_code == 200
+    assert "74&deg;C / 165&deg;F" in r.text
+    assert "240 ml buttermilk" in r.text
+    assert "1 cup buttermilk" not in r.text
+    # The oven table puts its Celsius column first.
+    assert r.text.index(">Celsius</th>") < r.text.index(">Fahrenheit</th>")
+
+
+def test_convert_page_starts_from_metric_when_chosen(client, monkeypatch):
+    from app.config import settings
+    r = client.get("/ui/convert")
+    assert 'id="convFrom" class="form-select form-select-lg" data-default="cup"' in r.text
+    monkeypatch.setattr(settings, "unit_system", "metric")
+    r = client.get("/ui/convert")
+    assert r.status_code == 200
+    assert 'id="convFrom" class="form-select form-select-lg" data-default="ml"' in r.text
+    assert 'id="convTo" class="form-select form-select-lg" data-default="cup"' in r.text
+    assert "<tr><td>250 ml</td>" in r.text
+    assert "<tr><td>1 teaspoon (tsp)</td>" not in r.text
+
+
+def test_generate_recipe_asks_for_metric_outside_the_user_note(client, monkeypatch):
+    """The units sentence is the app's own instruction: it rides ahead of the
+    fenced user note, so the note's length cap never cuts it off."""
+    import app.routers.mealie as mealie_router
+    from app.config import settings
+    monkeypatch.setattr(settings, "kitchen_appliances", [])
+    monkeypatch.setattr(settings, "unit_system", "metric")
+    captured = {}
+
+    class FakeProvider:
+        async def generate_recipe(self, name, extra_instructions=""):
+            captured["extra"] = extra_instructions
+            return {"name": name, "ingredients": [], "instructions": []}
+
+    monkeypatch.setattr(mealie_router, "get_enrich_provider", lambda: FakeProvider())
+    r = client.post("/mealie/recipes/generate",
+                    json={"name": "Chili", "custom_prompt": "x" * 2000})
+    assert r.status_code == 200
+    extra = captured["extra"]
+    assert extra.startswith("Write every measurement in metric units")
+    assert extra.index("Celsius") < extra.index("USER NOTE")
+
+    r = client.post("/mealie/recipes/generate", json={"name": "Soup"})
+    assert captured["extra"].startswith("Write every measurement in metric units")
+    assert "USER NOTE" not in captured["extra"]

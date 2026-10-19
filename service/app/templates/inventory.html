@@ -49,6 +49,13 @@
     .item-actions { flex: 1 0 100%; justify-content: flex-end; margin-left: 0; }
   }
   .item-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Which Grocy location a row's stock sits in, when the panel name does not
+     already say so (a product kept in two places is listed once per place). */
+  .item-location {
+    font-size: 0.72rem;
+    color: var(--bs-secondary-color);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .item-qty {
     font-size: 0.78rem;
     color: var(--bs-secondary-color);

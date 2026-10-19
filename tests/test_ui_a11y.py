@@ -249,7 +249,7 @@ def test_inventory_actions_pass_names_as_json():
     "Trader Joe's Salsa" closed the string and the buttons did nothing."""
     js = _read("static/js/pages/inventory.js")
     assert "'${PR.esc(item.name)}'" not in js
-    assert js.count("${PR.escAttrJs(item.name)})") >= 4
+    assert js.count("${PR.escAttrJs(item.name)}") >= 4
 
 
 # ui7: the setup wizard works from the keyboard

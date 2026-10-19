@@ -16,7 +16,7 @@ from . import durable as _durable
 
 # Single source of truth for the app version (shown in the UI, used by the
 # update checker, and reported by FastAPI). Bump on each tagged release.
-APP_VERSION = "0.21.102"
+APP_VERSION = "0.21.109"
 
 # Single source of truth for the product's display name. The internal runtime
 # identifiers (systemd units, install paths, the foodassistant_streamdeck
@@ -258,6 +258,12 @@ COMMON_TIMEZONES = (
 # does a time read" choices, and every surface in one kitchen should agree.
 CLOCK_FORMATS = ("auto", "12", "24")
 _DEFAULT_CLOCK_FORMAT = "auto"
+
+# Which measurements the kitchen reference pages lead with and the AI writes
+# recipes in: US customary (cups, ounces, Fahrenheit) or metric (grams,
+# milliliters, Celsius). Fleet-wide like the clock format.
+UNIT_SYSTEMS = ("us", "metric")
+_DEFAULT_UNIT_SYSTEM = "us"
 
 # What the kiosk screensaver draws. "bounce" (the gliding logo and clock) and
 # "photos" (the USB slideshow) are the originals; "toasters" (the flying
@@ -809,6 +815,21 @@ KITCHEN_APPLIANCES = [
 KITCHEN_APPLIANCE_LABELS = {key: label for key, label, _g, _d in KITCHEN_APPLIANCES}
 KITCHEN_APPLIANCE_KEYS = tuple(key for key, *_rest in KITCHEN_APPLIANCES)
 DEFAULT_KITCHEN_APPLIANCES = [key for key, _l, _g, default_on in KITCHEN_APPLIANCES if default_on]
+
+
+def units_clause(unit_system: str) -> str:
+    """A short sentence asking the AI to write measurements in metric.
+
+    Returns "" for US units, the AI's usual habit, so the prompt is left as it
+    was. Pure, so it is unit-testable without settings.
+    """
+    if unit_system != "metric":
+        return ""
+    return (
+        "Write every measurement in metric units: grams and kilograms for "
+        "weight, milliliters and liters for volume, centimeters for size, and "
+        "Celsius for temperatures. Do not use cups, ounces, pounds or Fahrenheit."
+    )
 
 
 def appliances_clause(keys) -> str:
@@ -1688,6 +1709,11 @@ class Settings(BaseSettings):
     # screensaver clock, the weather page, and server-rendered timestamps.
     # Pulled alongside the timezone so every surface in the kitchen agrees.
     clock_format: str = setting(_DEFAULT_CLOCK_FORMAT, form=True, pull=True, cosmetic=True)
+
+    # "us" or "metric" (see UNIT_SYSTEMS): which units the Kitchen Guide and
+    # the converter lead with, and the units AI-written recipes use. Pulled
+    # with the clock format so every kitchen surface agrees.
+    unit_system: str = setting(_DEFAULT_UNIT_SYSTEM, form=True, pull=True, cosmetic=True)
 
     # Update-check bookkeeping (FoodAssistant-lq01): when the app last checked
     # for a new version (UTC epoch), and what it found, so the UI can show a

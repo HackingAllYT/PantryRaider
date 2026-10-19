@@ -213,7 +213,10 @@ async def _consume_active_recipe(recipe: dict) -> list[str]:
         stock = await GrocyClient().get_full_stock()
     except Exception:
         return []
-    inv = [{"product_id": s["product_id"], "name": s["name"], "amount": s["amount"],
+    # A product kept in several places has one row per place; the consume is
+    # product-wide, so cap it at the product's total, not one place's share.
+    inv = [{"product_id": s["product_id"], "name": s["name"],
+            "amount": s.get("product_amount", s["amount"]),
             "tokens": _tokens(s["name"])}
            for s in stock if s.get("product_id") and _tokens(s["name"])]
     consumed: list[str] = []

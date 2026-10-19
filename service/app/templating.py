@@ -132,6 +132,8 @@ def theme_context(request: Request) -> dict:
         # browser-side clock (the screensaver, browser-rendered timestamps)
         # follows the same setting as the server-rendered ones.
         "clock_format": settings.clock_format,
+        # "us" or "metric": which units the kitchen reference pages lead with.
+        "unit_system": settings.unit_system,
         "display_rotation": settings.display_rotation,
         # Advanced display safe-area insets (per-edge px). Stamped on <html> so
         # kiosk-display.js can inset the kiosk content off a panel edge that

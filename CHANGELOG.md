@@ -10,6 +10,15 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Metric measurements.** Choose Metric under Settings, Advanced, Date, time & units. The Kitchen Guide then leads with Celsius and lists its substitutions in grams and milliliters, the converter starts from milliliters and leads its tables with metric amounts, and recipes the AI writes for you come back in grams, milliliters and Celsius. Recipes you already saved keep their own units, and the weather page keeps its own Fahrenheit or Celsius switch. Kitchen screens set up as Pi Remotes follow the main server's choice.
+- **Stocking up recognizes barcodes you already set up in Grocy.** A scan now checks Grocy first, so a product you created there by hand comes in with its own name, unit, group and storage area instead of a guess from Open Food Facts. A case barcode counts in the units the product is stocked in (one case of 18 bottles adds 18 bottles), and a barcode saved with an amount adds that amount on every scan. Open Food Facts is still used for barcodes Grocy does not know. Rename a row on the review screen and it is added under the new name instead. Thanks to @HackingAllYT for the fix.
+- **Use one item straight from the Inventory page.** Each row with stock now has a Use one button next to Mark one opened, so you can take a single item off your stock without scanning it, which helps most for things with no barcode. The check button still marks everything in that row consumed, and its tooltip now says so. Thanks to @HackingAllYT for the idea and the first version.
+
+### Fixed
+- **The phone camera scanner works in every Manage mode.** The Camera Scanner card only showed in Stock up, so on a phone there was no way to scan in Use stock, Shopping list or Audit stock. It now moves to whichever mode you pick, and its messages show in that mode. Thanks to @HackingAllYT for the fix.
+- **Inventory shows a product kept in two places in both places.** Four bottles in the basement fridge and three in the kitchen fridge used to show as seven in whichever one Grocy had as the product's default. Each place now gets its own row with its own amount, opened count and best-by date, and a small label names the Grocy location when the panel name does not already say it. Moving or consuming a row only touches the stock in that place. Recipes still count everything you have, and a stock count of one area no longer wipes out the same product's stock in other areas when you apply its corrections. Thanks to @HackingAllYT for the report and the fix.
+
 ## [0.21.102] - 2026-10-15
 
 ### Fixed

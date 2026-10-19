@@ -149,8 +149,11 @@ def test_issue_forms_link_to_pages_that_exist_and_ask_the_right_things():
     import yaml
     config = yaml.safe_load(_read(".github/ISSUE_TEMPLATE/config.yml"))
     urls = [link["url"] for link in config["contact_links"]]
-    # Discussions are off on the public repo, so that link was a 404.
-    assert not any("/discussions" in u for u in urls)
+    # Discussions are on (2026-10-15), so questions have somewhere to go.
+    assert any(u.endswith("/PantryRaider/discussions") for u in urls)
+    # New reports arrive marked for triage.
+    for name in ("bug_report.yml", "feature_request.yml"):
+        assert "status: triage" in yaml.safe_load(_read(".github/ISSUE_TEMPLATE/" + name))["labels"]
 
     form = yaml.safe_load(_read(".github/ISSUE_TEMPLATE/bug_report.yml"))
     fields = {item.get("id"): item for item in form["body"] if item.get("id")}

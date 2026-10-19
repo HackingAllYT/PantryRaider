@@ -338,6 +338,7 @@ async def setup_page(request: Request):
         "common_timezones": COMMON_TIMEZONES,
         "system_timezone": _system_timezone(),
         "clock_format": settings.clock_format,
+        "unit_system": settings.unit_system,
         "scheduled_reboot_time": settings.scheduled_reboot_time,
         "scheduled_reboot_frequency": settings.scheduled_reboot_frequency,
         "scheduled_reboot_day": settings.scheduled_reboot_day,

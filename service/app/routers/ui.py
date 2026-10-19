@@ -758,10 +758,12 @@ async def expiring_page(request: Request, days: int = 7):
 
 @router.post("/consume/{product_id}")
 async def consume_item(request: Request, product_id: int, amount: float = Form(1.0),
-                       name: str = Form("")):
+                       name: str = Form(""), location_id: int | None = Form(None)):
     grocy = GrocyClient()
     try:
-        await grocy.consume_stock(product_id, amount)
+        # The Inventory page sends the row's location, so consuming a product
+        # kept in two places takes the stock from the row that was tapped (#73).
+        await grocy.consume_stock(product_id, amount, location_id=location_id)
         # Name the product in the toast so it is clear what just left stock
         # (an icon-only button plus a vague toast read wrong, FoodAssistant-w0kh).
         msg = f"{name} marked as consumed." if name.strip() else "Item marked as consumed."

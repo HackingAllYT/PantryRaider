@@ -214,6 +214,7 @@ _SETUP_PAYLOAD_OVERRIDES: dict[str, tuple] = {
     "nav_visibility": (str, ""),
     "timer_chips": (str, ""),
     "clock_format": (str, ""),
+    "unit_system": (str, ""),
     "barcode_autocheck_shopping": (bool, False),
     "start_page_enabled": (bool, False),
     "floating_nav_autohide_streamdeck": (bool, False),

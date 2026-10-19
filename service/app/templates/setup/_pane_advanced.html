@@ -4,7 +4,7 @@
              control ids (switch_server_url, switch_upstream_api_key, timezone,
              clock_format, debug_logging) and the JS hooks are unchanged. -->
         <div class="tab-pane fade" id="pane-advanced">
-          <p class="pane-intro">Maintenance that is not day-to-day: the timezone, reloads and reboots, diagnostics, and switching this device's role.</p>
+          <p class="pane-intro">Maintenance that is not day-to-day: the timezone and measurement units, reloads and reboots, diagnostics, and switching this device's role.</p>
 
           {% if s.deployment_mode == 'pi_hosted' %}
           {% call panel('Run as a satellite', 'Point this appliance at another Pantry Raider server. The screen and Stream Deck keep working; inventory, recipes, and AI come from that server.') %}
@@ -39,10 +39,10 @@
           {% endcall %}
           {% endif %}
 
-          {% call panel('Date & time', 'How times read across the app. The clock stays NTP-synced.') %}
+          {% call panel('Date, time & units', 'How times and measurements read across the app. The clock stays NTP-synced.') %}
             {% if features.satellite %}
-            {# A Pi Remote inherits the fleet timezone from the main server. #}
-            <p class="text-secondary small mt-1 mb-0"><i class="bi bi-hdd-network me-1"></i>Timezone and clock format are managed on the main server and applied here automatically on each sync{% if timezone %} (currently <strong>{{ timezone }}</strong>){% endif %}.</p>
+            {# A Pi Remote inherits the fleet timezone and units from the main server. #}
+            <p class="text-secondary small mt-1 mb-0"><i class="bi bi-hdd-network me-1"></i>Timezone, clock format and measurement units are managed on the main server and applied here automatically on each sync{% if timezone %} (currently <strong>{{ timezone }}</strong>){% endif %}.</p>
             {% else %}
             {% call srow('Timezone', 'Auto follows the system clock.',
                          'Timezone for timestamps shown in the app (like the last update check). This only sets how times read. Pi Remotes inherit this from the server.') %}
@@ -64,9 +64,16 @@
                 <option value="24" {{ 'selected' if clock_format == '24' else '' }}>24-hour (15:42)</option>
               </select>
             {% endcall %}
-            {% call srow('Date & time', 'Save the settings above.') %}
+            {% call srow('Measurement units', 'US cups and ounces, or metric grams and milliliters.',
+                         'The Kitchen Guide and the converter lead with these units, and recipes the AI writes for you use them. Recipes you already saved or imported keep the units they came with. The weather page has its own Fahrenheit or Celsius switch. Pi Remotes inherit this from the server.') %}
+              <select class="form-select form-select-sm" id="unit_system" style="max-width:340px">
+                <option value="us" {{ 'selected' if unit_system != 'metric' else '' }}>US (cups, ounces, &deg;F)</option>
+                <option value="metric" {{ 'selected' if unit_system == 'metric' else '' }}>Metric (grams, milliliters, &deg;C)</option>
+              </select>
+            {% endcall %}
+            {% call srow('Save', 'Save the settings above.') %}
               <button type="button" class="btn btn-outline-info btn-sm" data-on-click="saveTimezone(this)">
-                <i class="bi bi-check-lg me-1"></i>Save date &amp; time
+                <i class="bi bi-check-lg me-1"></i>Save date, time &amp; units
               </button>
               <span class="test-result ms-2" id="timezone-result"></span>
             {% endcall %}

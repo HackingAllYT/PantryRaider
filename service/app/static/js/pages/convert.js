@@ -77,8 +77,10 @@
   }
   buildOptions(fromEl);
   buildOptions(toEl);
-  fromEl.value = "cup";
-  toEl.value = "ml";
+  // The page names the starting pair, which follows the measurement units
+  // setting (metric starts from milliliters).
+  fromEl.value = fromEl.getAttribute("data-default") || "cup";
+  toEl.value = toEl.getAttribute("data-default") || "ml";
 
   function recompute() {
     var from = byId(fromEl.value);

@@ -181,3 +181,52 @@ def test_inventory_page_ships_the_opened_action_and_badge(client):
     assert "badge-opened" in page
     assert "item.amount_opened > 0" in page
     assert "item.amount > 0" in page
+
+
+# --- Stock split across locations (#73) --------------------------------------
+
+def test_full_stock_splits_a_product_across_its_locations():
+    """One product in two Grocy locations shows each location's own amount,
+    not the product total under its default location."""
+    stock = [{"product_id": 7, "amount": 7.0, "location_id": 1,
+              "best_before_date": "2999-12-31",
+              "product": {"name": "Cool Blue", "location_id": 1}}]
+    rows = [
+        {"product_id": 7, "amount": 4, "location_id": 1, "open": 0,
+         "best_before_date": "2999-12-31"},
+        {"product_id": 7, "amount": 3, "location_id": 2, "open": 1,
+         "best_before_date": "2999-12-30"},
+    ]
+    locations = [{"id": 1, "name": "Basement Fridge"},
+                 {"id": 2, "name": "Kitchen Fridge"}]
+
+    async def fake_get(self, path):
+        return {"/stock": stock, "/objects/stock": rows}.get(path, [])
+
+    async def fake_cached(self, path):
+        return locations if path == "/objects/locations" else []
+
+    with patch.object(GrocyClient, "_get", fake_get), \
+         patch.object(GrocyClient, "_cached_list", fake_cached):
+        out = asyncio.run(GrocyClient().get_full_stock())
+    by_loc = {r["location_name"]: r for r in out}
+    assert by_loc["Basement Fridge"]["amount"] == 4.0
+    assert by_loc["Kitchen Fridge"]["amount"] == 3.0
+    assert by_loc["Kitchen Fridge"]["amount_opened"] == 3.0
+    assert by_loc["Basement Fridge"]["amount_opened"] == 0.0
+    assert by_loc["Kitchen Fridge"]["best_before_date"] == "2999-12-30"
+    assert {r["product_amount"] for r in out} == {7.0}
+
+
+def test_consume_sends_the_rows_location_to_grocy():
+    sent = {}
+
+    async def fake_post(self, path, body):
+        sent[path] = body
+        return {}
+
+    with patch.object(GrocyClient, "_post", fake_post):
+        asyncio.run(GrocyClient().consume_stock(7, 3, location_id=2))
+        asyncio.run(GrocyClient().consume_stock(8, 1))
+    assert sent["/stock/products/7/consume"]["location_id"] == 2
+    assert "location_id" not in sent["/stock/products/8/consume"]

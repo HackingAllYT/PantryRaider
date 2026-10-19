@@ -140,6 +140,13 @@ class PendingItem(Base):
     # this. The UI shows "Saved, looking up..." while it is set. Added after
     # release: database.ensure_schema() backfills the column (default 0).
     enriching = Column(Integer, default=0)
+    # Set when Grocy already knows the scanned barcode (issue #65): the commit
+    # stocks that exact product, converting the barcode's unit (a case, say)
+    # into the product's stock unit, instead of matching or creating one by
+    # name. scan_amount is what one more scan of the barcode adds, in the
+    # row's unit. Added after release: database.ensure_schema() backfills both.
+    grocy_product_id = Column(Integer, nullable=True)
+    scan_amount = Column(Float, nullable=True)
     source = Column(String, default="scanner")     # scanner | ha | esp32 | manual
     created_at = Column(
         String, default=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")

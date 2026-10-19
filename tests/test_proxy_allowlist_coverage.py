@@ -189,6 +189,7 @@ _GROCY_ARGS = dict(_COMMON, **{
     # A space in the barcode: it must arrive as one path segment.
     "barcode": "4006381 333931", "stock_entry_id": "abc", "name": "Pantry Shelf",
     "bucket": "frozen", "entry": dict(_ENTRY), "item": _food(),
+    "quantity": 1.0, "unit": "Pack",
 })
 _MEALIE_ARGS = dict(_COMMON, **{
     "list_id": "abc", "item_id": "it1", "entry_id": 3, "date": "2026-10-01",

@@ -29,7 +29,7 @@ OLD_SAVEABLE = {
     "background_image_url", "background_opacity", "barcode_autocheck_shopping",
     "barcode_enrichment", "barcode_global_capture", "barcode_llm_fallback",
     "beszel_enabled", "beszel_url", "button_devices", "buttons_enabled",
-    "check_for_updates", "clock_format", "cloud_base_url",
+    "check_for_updates", "clock_format", "unit_system", "cloud_base_url",
     "cloud_instance_token", "cloud_link_session", "contact_devices",
     "contacts_enabled", "convert_custom_rows", "cook_ai_context",
     "cub_alerts_take_over", "cub_auto_update", "cub_ble_advertise",
@@ -106,7 +106,7 @@ OLD_SAVEABLE = {
 OLD_SATELLITE_PULL_FIELDS = {
     "anthropic_api_key", "anthropic_model", "auto_update",
     "barcode_autocheck_shopping", "barcode_enrichment", "barcode_llm_fallback",
-    "beszel_enabled", "beszel_url", "clock_format", "cook_ai_context",
+    "beszel_enabled", "beszel_url", "clock_format", "unit_system", "cook_ai_context",
     "custom_storage_categories", "enrich_model", "enrich_provider",
     "expiring_soon_days", "fleet_document_printer_queue",
     "fleet_label_printer_queue", "gemini_api_key", "gemini_model",
@@ -126,7 +126,7 @@ OLD_SATELLITE_PULL_FIELDS = {
 OLD_SATELLITE_READONLY_FIELDS = {
     "anthropic_api_key", "anthropic_model", "auto_update",
     "barcode_autocheck_shopping", "barcode_enrichment", "barcode_llm_fallback",
-    "beszel_enabled", "beszel_url", "clock_format", "cook_ai_context",
+    "beszel_enabled", "beszel_url", "clock_format", "unit_system", "cook_ai_context",
     "custom_storage_categories", "enrich_model", "enrich_provider",
     "expiring_soon_days", "fleet_document_printer_queue",
     "fleet_label_printer_queue", "gemini_api_key", "gemini_model",
@@ -151,7 +151,7 @@ OLD_SATELLITE_WITHHELD_FIELDS = {
 }
 
 OLD_UNSIGNED_COSMETIC_FIELDS = {
-    "clock_format", "expiring_soon_days", "perishable_days",
+    "clock_format", "unit_system", "expiring_soon_days", "perishable_days",
     "streamdeck_weather_location", "streamdeck_weather_units",
     "suggest_per_tier", "ui_theme",
 }
@@ -183,6 +183,7 @@ OLD_SETUP_PAYLOAD = {
     'barcode_llm_fallback': ('bool', False),
     'check_for_updates': ('bool', True),
     'clock_format': ('str', ''),
+    'unit_system': ('str', ''),
     'contacts_enabled': ('bool', False),
     'convert_custom_rows': ('list', []),
     'cook_ai_context': ('str', ''),

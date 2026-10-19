@@ -18,7 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..config import AI_WRITING_UNAVAILABLE_MSG, settings, appliances_clause
+from ..config import AI_WRITING_UNAVAILABLE_MSG, settings, appliances_clause, units_clause
 from ..database import get_db
 from ..dependencies import get_enrich_provider
 from ..services.grocy import GrocyClient, GrocyError
@@ -1116,10 +1116,15 @@ async def generate_recipe(payload: GenerateRecipePayload):
     _check_ai_budget()
     provider = get_enrich_provider()
     try:
+        # The units sentence is the app's own instruction, so it goes ahead of
+        # the fenced user note, where it is neither treated as a user's wish
+        # nor cut short by the note's length cap.
         recipe = await provider.generate_recipe(
-            name.strip(), extra_instructions=_safe_user_steer(". ".join(
-                p for p in (appliances_clause(settings.kitchen_appliances),
-                            payload.custom_prompt) if p)))
+            name.strip(), extra_instructions="\n".join(p for p in (
+                units_clause(settings.unit_system),
+                _safe_user_steer(". ".join(
+                    p for p in (appliances_clause(settings.kitchen_appliances),
+                                payload.custom_prompt) if p))) if p))
     except NotImplementedError:
         raise HTTPException(503, {"detail": "AI provider not configured", "setup_url": "/setup"})
     except Exception as e:  # noqa: BLE001
@@ -1163,7 +1168,8 @@ async def suggest_llm(payload: SuggestLLMPayload = Body(default_factory=SuggestL
         return {"suggestions": [], "message": "No inventory items found."}
     ordered = sorted(stock, key=lambda s: (s.get("days_remaining") is None,
                                            s.get("days_remaining") or 999))
-    item_names = [s["name"] for s in ordered]
+    # A product kept in two places is listed once per place; name it once.
+    item_names = list(dict.fromkeys(s["name"] for s in ordered))
     combined_prefs = _safe_user_steer(". ".join(
         p for p in (settings.cook_ai_context,
                     appliances_clause(settings.kitchen_appliances),
@@ -1971,8 +1977,11 @@ async def cooked_recipe(payload: CookedPayload, db: Session = Depends(get_db)):
         raise HTTPException(502, f"Could not read Grocy stock: {e}")
 
     from ..services.recipe_match import _tokens, _ingredient_text
+    # One row per place a product is kept; the consume is product-wide, so
+    # cap it at the product's total.
     inv = [{"product_id": s["product_id"], "name": s["name"],
-            "amount": s["amount"], "tokens": _tokens(s["name"])}
+            "amount": s.get("product_amount", s["amount"]),
+            "tokens": _tokens(s["name"])}
            for s in stock if s.get("product_id") and _tokens(s["name"])]
 
     consumed, failed = [], []

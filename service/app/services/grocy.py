@@ -3,6 +3,7 @@ import html as _html
 import re
 
 import httpx
+from urllib.parse import quote
 from datetime import date, timedelta
 from ..config import settings
 from ..models.food import FoodItem
@@ -411,6 +412,51 @@ def opened_amounts(stock: list[dict]) -> dict[int, float]:
     return out
 
 
+def _urgency(best_before_date: str | None, today: date) -> tuple[int | None, str]:
+    """(days_remaining, urgency bucket) for a best-by date. Pure."""
+    if not best_before_date:
+        return None, "unknown"
+    days_remaining = (date.fromisoformat(best_before_date) - today).days
+    if days_remaining < 0:
+        return days_remaining, "expired"
+    if days_remaining == 0:
+        return days_remaining, "today"
+    if days_remaining <= 3:
+        return days_remaining, "3d"
+    if days_remaining <= 7:
+        return days_remaining, "7d"
+    return days_remaining, "ok"
+
+
+def stock_by_location(stock_rows: list[dict]) -> dict[int, dict[str, dict]]:
+    """Product id -> location id -> {amount, amount_opened, best_before_date},
+    from the raw /objects/stock rows. Pure.
+
+    Each location's best-by is its earliest entry's, matching how /stock
+    reports a product's next due date. Rows without a product or a positive
+    amount are skipped.
+    """
+    out: dict[int, dict[str, dict]] = {}
+    for row in stock_rows or []:
+        try:
+            pid = int(row.get("product_id") or 0)
+            amount = float(row.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not pid or amount <= 0:
+            continue
+        loc = str(row.get("location_id") or "")
+        part = out.setdefault(pid, {}).setdefault(
+            loc, {"amount": 0.0, "amount_opened": 0.0, "best_before_date": None})
+        part["amount"] += amount
+        if str(row.get("open") or "0") not in ("0", "", "False", "false"):
+            part["amount_opened"] += amount
+        bbd = row.get("best_before_date")
+        if bbd and (part["best_before_date"] is None or bbd < part["best_before_date"]):
+            part["best_before_date"] = bbd
+    return out
+
+
 def _location_id(entry: dict) -> int:
     try:
         return int(entry.get("location_id") or 0)
@@ -468,6 +514,54 @@ def _row_after_date_write(entries: list[dict], from_id: int,
     if dated:
         return max(dated, key=lambda e: int(e.get("id") or 0))
     return own
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def qu_conversion_factor(conversions: list[dict], product_id: int,
+                         from_qu: int, to_qu: int) -> float | None:
+    """How many ``to_qu`` make one ``from_qu`` for ``product_id``. Pure.
+
+    ``conversions`` are Grocy quantity_unit_conversions rows (from_qu_id,
+    to_qu_id, factor, product_id). A product's own conversion beats a global
+    one (no product_id), as in Grocy; a conversion written the other way round
+    is used inverted. None when the two units are not linked at all. The
+    resolved view Grocy 4 also offers carries the same columns, already
+    chained, so it can be passed in unchanged.
+    """
+    if from_qu == to_qu:
+        return 1.0
+    for scope in (product_id, None):
+        for c in conversions or []:
+            if _int_or_none(c.get("product_id")) != scope:
+                continue
+            src = _int_or_none(c.get("from_qu_id"))
+            dst = _int_or_none(c.get("to_qu_id"))
+            try:
+                factor = float(c.get("factor") or 0)
+            except (TypeError, ValueError):
+                continue
+            if factor <= 0:
+                continue
+            if (src, dst) == (from_qu, to_qu):
+                return factor
+            if (src, dst) == (to_qu, from_qu):
+                return 1.0 / factor
+    return None
+
+
+def unit_matches(unit: dict, name: str) -> bool:
+    """True when ``name`` is this Grocy quantity unit's singular or plural. Pure."""
+    low = (name or "").strip().lower()
+    return bool(low) and low in (
+        (unit.get("name") or "").strip().lower(),
+        (unit.get("name_plural") or "").strip().lower(),
+    )
 
 
 # Shared connection pool for the life of the app
@@ -674,14 +768,16 @@ class GrocyClient:
         return await self._post(f"/stock/products/{product_id}/add", body)
 
     async def consume_stock(self, product_id: int, amount: float = 1.0,
-                            spoiled: bool = False) -> dict:
+                            spoiled: bool = False,
+                            location_id: int | None = None) -> dict:
         # ``spoiled`` is the difference between "we ate it" and "we threw it
         # out"; Grocy keeps it in the stock log, which is what the waste
         # insights read. Defaults to eaten so no existing caller changes.
-        return await self._post(f"/stock/products/{product_id}/consume", {
-            "amount": amount,
-            "spoiled": bool(spoiled),
-        })
+        # ``location_id`` limits the consume to one location's stock (#73).
+        body = {"amount": amount, "spoiled": bool(spoiled)}
+        if location_id:
+            body["location_id"] = int(location_id)
+        return await self._post(f"/stock/products/{product_id}/consume", body)
 
     async def open_stock(self, product_id: int, amount: float = 1.0) -> dict:
         """Mark one unit opened. Grocy then applies the product's
@@ -818,50 +914,54 @@ class GrocyClient:
             ts = row.get("row_created_timestamp") or row.get("purchased_date") or ""
             if pid and ts and ts > added.get(pid, ""):
                 added[pid] = ts
+        # /stock also reports one row per product under the product's default
+        # location, so stock kept in two places showed its whole total in one
+        # (#73). The raw rows carry the real location_id of every entry.
+        by_location = stock_by_location(stock_rows)
         today = date.today()
         result = []
         for entry in raw:
             product = entry.get("product") or {}
             name = product.get("name") or f"Product {entry.get('product_id', '?')}"
-            # Prefer the per-entry location_id; fall back to the product's default
-            loc_id = str(entry.get("location_id") or product.get("location_id") or "")
-            loc_name = locations.get(loc_id, "")
-            bucket = classify_location(loc_name)
-
-            bbd = entry.get("best_before_date")
-            if bbd:
-                d = date.fromisoformat(bbd)
-                days_remaining = (d - today).days
-                if days_remaining < 0:
-                    urgency = "expired"
-                elif days_remaining == 0:
-                    urgency = "today"
-                elif days_remaining <= 3:
-                    urgency = "3d"
-                elif days_remaining <= 7:
-                    urgency = "7d"
-                else:
-                    urgency = "ok"
-            else:
-                days_remaining = None
-                urgency = "unknown"
-
             pid = int(entry.get("product_id", 0))
             group_id = str(product.get("product_group_id") or "")
-            result.append({
+            total = float(entry.get("amount") or 0)
+            row = {
                 "product_id": pid,
                 "name": name,
-                "amount": float(entry.get("amount") or 0),
                 "unit": _stock_unit_name(entry, product, units),
-                "best_before_date": bbd,
-                "days_remaining": days_remaining,
-                "urgency": urgency,
-                "location_name": loc_name,
-                "storage_bucket": bucket,
                 "category": groups.get(group_id, ""),
                 "added_date": added.get(pid),
-                "amount_opened": opened.get(pid, 0.0),
-            })
+                # The product's total across every location, for callers
+                # (the recipe matcher) that ask "is there enough of it".
+                "product_amount": total,
+            }
+            splits = by_location.get(pid)
+            if not splits or len(splits) < 2:
+                # Prefer the per-entry location_id; fall back to the product's
+                # default, and keep /stock's own amounts and best-by.
+                only = next(iter(splits)) if splits else None
+                splits = {only or str(entry.get("location_id")
+                                      or product.get("location_id") or ""): {
+                    "amount": total,
+                    "amount_opened": opened.get(pid, 0.0),
+                    "best_before_date": entry.get("best_before_date"),
+                }}
+            for loc_id, part in splits.items():
+                loc_name = locations.get(loc_id, "")
+                bbd = part["best_before_date"]
+                days_remaining, urgency = _urgency(bbd, today)
+                result.append({
+                    **row,
+                    "amount": part["amount"],
+                    "best_before_date": bbd,
+                    "days_remaining": days_remaining,
+                    "urgency": urgency,
+                    "location_id": int(loc_id) if loc_id.isdigit() else None,
+                    "location_name": loc_name,
+                    "storage_bucket": classify_location(loc_name),
+                    "amount_opened": part["amount_opened"],
+                })
         return result
 
     async def edit_product(self, product_id: int,
@@ -1032,9 +1132,14 @@ class GrocyClient:
         return entries, row
 
     async def move_product(self, product_id: int, bucket: str,
-                           propose_best_by=None) -> dict:
+                           propose_best_by=None,
+                           from_location_id: int | None = None) -> dict:
         """Transfer all stock of a product to the location for `bucket` and
         make that the product's default location.
+
+        ``from_location_id`` moves only the stock held at that one location
+        (#73: a product kept in two places is listed once per place). The
+        default location then changes only when no stock is left elsewhere.
 
         ``propose_best_by`` is an optional callable ``(old_best_by: date,
         from_bucket: str) -> date | None`` (see
@@ -1087,7 +1192,9 @@ class GrocyClient:
         # Each pass moves one whole row, so this only caps a Grocy that never
         # lets go of one.
         for _ in range(len(entries) + 10):
-            row = next((e for e in entries if _movable(e, to_id)), None)
+            row = next((e for e in entries if _movable(e, to_id)
+                        and (not from_location_id
+                             or _location_id(e) == int(from_location_id))), None)
             if row is None:
                 break
             from_id = int(row["location_id"])
@@ -1115,8 +1222,11 @@ class GrocyClient:
 
         # Entries without a location can't be transferred, but changing the
         # product's default location still re-buckets them on the dashboard.
-        await self._request("PUT", f"/objects/products/{product_id}",
-                            {"location_id": to_id})
+        # A one-location move leaves stock elsewhere on the old default.
+        if not from_location_id or not any(
+                _movable(e, to_id) for e in entries):
+            await self._request("PUT", f"/objects/products/{product_id}",
+                                {"location_id": to_id})
 
         # One transfer moves in one temperature direction, so every update
         # agrees; the earliest resulting date is the one the user will see
@@ -1160,6 +1270,122 @@ class GrocyClient:
         await self._post("/objects/product_barcodes",
                          {"product_id": product_id, "barcode": barcode})
         return True
+
+    async def _product_conversions(self, product_id: int) -> list[dict]:
+        """Unit conversions that apply to ``product_id``.
+
+        Grocy 4 resolves chained and default conversions in a view; older
+        releases only have the plain table, which qu_conversion_factor reads
+        directly (product-specific, then global)."""
+        try:
+            return await self._get(
+                "/objects/quantity_unit_conversions_resolved"
+                f"?query%5B%5D=product_id%3D{product_id}")
+        except GrocyError:
+            return await self.get_unit_conversions()
+
+    async def find_barcode(self, barcode: str) -> dict | None:
+        """The Grocy product registered under ``barcode``, or None.
+
+        Reads Grocy's own barcode table, so a product that was already set up
+        in Grocy (for example before Pantry Raider was installed) is recognized
+        with its name and units instead of being looked up again elsewhere
+        (issue #65). The result carries the barcode's own unit and amount (a
+        case barcode can mean "1 Pack") and ``factor``: how many stock units
+        one of that unit holds, or None when Grocy has no conversion for it.
+        """
+        barcode = (barcode or "").strip()
+        if not barcode:
+            return None
+        rows = await self._get(
+            "/objects/product_barcodes?query%5B%5D=barcode%3D"
+            + quote(barcode, safe=""))
+        row = next((r for r in rows or [] if r.get("barcode") == barcode), None)
+        product_id = _int_or_none(row and row.get("product_id"))
+        if not product_id:
+            return None
+        product = await self._get(f"/objects/products/{product_id}")
+        if not product or not product.get("name"):
+            return None
+        units = {int(u["id"]): u for u in
+                 await self._cached_list("/objects/quantity_units")}
+        stock_qu = _int_or_none(product.get("qu_id_stock"))
+        barcode_qu = _int_or_none(row.get("qu_id")) or stock_qu
+        try:
+            amount = float(row.get("amount") or 0) or 1.0
+        except (TypeError, ValueError):
+            amount = 1.0
+        factor = None
+        if barcode_qu and stock_qu:
+            factor = qu_conversion_factor(
+                await self._product_conversions(product_id),
+                product_id, barcode_qu, stock_qu)
+        if factor is None:
+            # No way to turn the barcode's unit into stock units: fall back
+            # to the stock unit so the amount is never silently scaled wrong.
+            barcode_qu, factor = stock_qu, 1.0
+        location = group = ""
+        loc_id = _int_or_none(product.get("location_id"))
+        if loc_id:
+            location = next((loc["name"] for loc in
+                             await self._cached_list("/objects/locations")
+                             if _int_or_none(loc.get("id")) == loc_id), "")
+        group_id = _int_or_none(product.get("product_group_id"))
+        if group_id:
+            group = next((g["name"] for g in
+                          await self._cached_list("/objects/product_groups")
+                          if _int_or_none(g.get("id")) == group_id), "")
+        return {
+            "product_id": product_id,
+            "name": product["name"],
+            "unit": (units.get(barcode_qu) or {}).get("name") or "item",
+            "amount": amount,
+            "factor": factor,
+            "location": location,
+            "product_group": group,
+            "default_best_before_days": _int_or_none(
+                product.get("default_best_before_days")) or 0,
+        }
+
+    async def stock_amount(self, product_id: int, quantity: float,
+                           unit: str) -> float:
+        """``quantity`` of ``unit`` expressed in the product's stock unit.
+
+        ``unit`` is a Grocy quantity unit name (singular or plural). A unit
+        Grocy does not know, or one with no conversion for this product, is
+        taken as the stock unit itself, which is what the add used before."""
+        product = await self._get(f"/objects/products/{product_id}")
+        stock_qu = _int_or_none(product.get("qu_id_stock"))
+        unit_row = next((u for u in await self._cached_list("/objects/quantity_units")
+                         if unit_matches(u, unit)), None)
+        unit_qu = _int_or_none(unit_row and unit_row.get("id"))
+        if not stock_qu or not unit_qu:
+            return quantity
+        factor = qu_conversion_factor(
+            await self._product_conversions(product_id),
+            product_id, unit_qu, stock_qu)
+        return quantity * factor if factor else quantity
+
+    async def add_to_product(self, product_id: int, item: FoodItem) -> dict:
+        """Stock ``item`` onto an existing product, converting its unit.
+
+        Used for a scan Grocy already recognized (issue #65): the stock lands
+        on that exact product, never on a new one created by name. It goes to
+        the product's own default location while the review screen kept that
+        storage area, and to the area the user picked when they changed it."""
+        amount = await self.stock_amount(product_id, item.quantity, item.unit)
+        product = await self._get(f"/objects/products/{product_id}") or {}
+        default_id = _int_or_none(product.get("location_id"))
+        default_name = next((loc["name"] for loc in
+                             await self._cached_list("/objects/locations")
+                             if _int_or_none(loc.get("id")) == default_id), "")
+        location_id = None
+        if classify_location(default_name) != item.storage_type.value:
+            location_id = await self.ensure_location(
+                _STORAGE_LABEL[item.storage_type.value])
+        await self.add_stock(product_id, item.model_copy(update={"quantity": amount}),
+                             location_id)
+        return {"product_id": product_id, "name": item.name, "amount": amount}
 
     async def import_item(self, item: FoodItem) -> dict:
         storage_name = _STORAGE_LABEL[item.storage_type.value]

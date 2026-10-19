@@ -143,20 +143,38 @@ def start(location: str, expected: list[dict] | None = None) -> dict:
     least a "name"); the caller fetches it so this stays network-free. Starting a
     new session replaces any session already in progress."""
     exp = []
+    by_key: dict[str, dict] = {}
     for e in (expected or []):
         nm = (e.get("name") or "").strip()
         if not nm:
             continue
-        exp.append({
+        key = normalize(nm)
+        if key in by_key:
+            # A product kept in several locations arrives as one row per
+            # location (#73); an all-areas audit counts it once, in total.
+            prev = by_key[key]
+            if prev["amount"] is not None and e.get("amount") is not None:
+                prev["amount"] = float(prev["amount"]) + float(e["amount"])
+            d = e.get("days_remaining")
+            if d is not None and (prev["days_remaining"] is None
+                                  or d < prev["days_remaining"]):
+                prev["days_remaining"] = d
+            continue
+        by_key[key] = {
             "name": nm,
-            "key": normalize(nm),
+            "key": key,
             "amount": e.get("amount"),
+            # The product's stock across every location. A correction sets
+            # Grocy's product-wide amount, so a one-location count must keep
+            # what the other locations hold (#73).
+            "product_amount": e.get("product_amount"),
             "days_remaining": e.get("days_remaining"),
             # Kept so an end-of-audit Apply corrections run can address the
             # exact Grocy product; sessions saved before this field existed
             # simply cannot be corrected (build_corrections skips them).
             "product_id": e.get("product_id"),
-        })
+        }
+        exp.append(by_key[key])
     # The whole-pantry scope is stored under a stable label so every surface
     # shows "All areas" instead of an empty value or the raw sentinel.
     loc = ALL_AREAS_LABEL if is_all_areas(location) else str(location).strip()
@@ -227,6 +245,7 @@ def status() -> dict:
         "amount": e.get("amount"),
         "days_remaining": e.get("days_remaining"),
         "product_id": e.get("product_id"),
+        "product_amount": e.get("product_amount"),
         "seen": e["key"] in scanned_keys,
         "scanned_count": scanned.get(e["key"], {}).get("count", 0),
     } for e in expected]
@@ -274,7 +293,9 @@ def build_corrections(expected: list[dict]) -> list[dict]:
     ``product_id`` to address (an old session snapshot), when its expected
     ``amount`` is unknown (no discrepancy can be established), or when the
     counted amount already matches. Each correction carries the product_id,
-    the name, the counted amount to set, and the expected amount it replaces.
+    the name, the counted amount, the expected amount it replaces, and
+    ``set_to``: the product-wide amount to set, which is the count plus
+    whatever the product holds in locations outside the audit.
     """
     out = []
     for e in expected or []:
@@ -289,11 +310,15 @@ def build_corrections(expected: list[dict]) -> list[dict]:
         counted = float(e.get("scanned_count") or 0)
         if float(amount) == counted:
             continue  # count matches Grocy: nothing to do
+        # Grocy's correction is product-wide: keep what other locations hold.
+        total = e.get("product_amount")
+        others = max(float(total) - float(amount), 0.0) if total is not None else 0.0
         out.append({
             "product_id": int(pid),
             "name": e.get("name") or "",
             "counted": counted,
             "expected": float(amount),
+            "set_to": others + counted,
         })
     return out
 
@@ -316,6 +341,9 @@ def record_corrections(applied: list[dict]) -> None:
         changed = False
         for e in _state["expected"]:
             if e["key"] in by_key:
+                if e.get("product_amount") is not None and e.get("amount") is not None:
+                    e["product_amount"] = (float(e["product_amount"])
+                                           + float(by_key[e["key"]]) - float(e["amount"]))
                 e["amount"] = by_key[e["key"]]
                 changed = True
         if changed:

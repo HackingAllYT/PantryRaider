@@ -427,17 +427,19 @@ async function checkSatelliteUpdate(btn) {
   }
 }
 
-// Date & time + Maintenance (FoodAssistant-lq01/-amp0/-wvwm).
+// Date, time & units + Maintenance (FoodAssistant-lq01/-amp0/-wvwm).
 async function saveTimezone(btn) {
   const el = document.getElementById('timezone-result');
   const tz = document.getElementById('timezone')?.value ?? '';
   if (el) el.innerHTML = '<span class="text-secondary">Saving…</span>';
   if (btn) btn.disabled = true;
-  // The clock format select sits in the same Date & time card and saves with
-  // the same button; absent (older markup) it is simply left out of the POST.
+  // The clock format and units selects sit in the same card and save with the
+  // same button; absent (older markup) they are simply left out of the POST.
   const body = { timezone: tz };
   const cf = document.getElementById('clock_format');
   if (cf) body.clock_format = cf.value;
+  const us = document.getElementById('unit_system');
+  if (us) body.unit_system = us.value;
   try {
     const r = await fetch('setup/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json();

@@ -9,7 +9,8 @@ from pydantic import BaseModel
 from ...config import (
     settings, DISPLAY_ROTATIONS, _DEFAULT_DISPLAY_ROTATION, DISPLAY_TYPES,
     FLOATING_NAV_POSITIONS, FLOATING_NAV_ORIENTATIONS, NAV_VISIBILITY, TIMER_CHIPS,
-    CLOCK_FORMATS, _DEFAULT_CLOCK_FORMAT, SCREENSAVER_MODES, _DEFAULT_SCREENSAVER_MODE,
+    CLOCK_FORMATS, _DEFAULT_CLOCK_FORMAT, UNIT_SYSTEMS, _DEFAULT_UNIT_SYSTEM,
+    SCREENSAVER_MODES, _DEFAULT_SCREENSAVER_MODE,
     STREAMDECK_KEY_STYLES, STREAMDECK_ICON_COLORS, DEPLOYMENT_MODES,
     SATELLITE_READONLY_FIELDS, KITCHEN_APPLIANCE_KEYS,
 )
@@ -184,6 +185,9 @@ async def save_setup(request: Request, payload: SetupPayload):
     # 12/24-hour clock reading: only the known values persist.
     if "clock_format" in data and data["clock_format"] not in CLOCK_FORMATS:
         data["clock_format"] = _DEFAULT_CLOCK_FORMAT
+    # Measurement units: only the known values persist.
+    if "unit_system" in data and data["unit_system"] not in UNIT_SYSTEMS:
+        data["unit_system"] = _DEFAULT_UNIT_SYSTEM
     # Shopping-list backend: only the known values persist ("" = automatic).
     if ("shopping_backend" in data
             and data["shopping_backend"] not in ("", "grocy", "mealie")):

@@ -2,6 +2,8 @@
 {% block title %}Conversions: Pantry Raider{% endblock %}
 
 {% block content %}
+{# Metric starts the converter from metric units and leads each table with them. #}
+{% set metric = unit_system == 'metric' %}
 <div class="mt-3 mb-3">
   <h4><i class="bi bi-rulers me-2"></i>Kitchen Conversions</h4>
   <p class="text-secondary mb-0">A quick reference for common cooking measurements.</p>
@@ -27,11 +29,11 @@
       </div>
       <div class="col-6 col-md-3">
         <label class="form-label" for="convFrom">From</label>
-        <select id="convFrom" class="form-select form-select-lg"></select>
+        <select id="convFrom" class="form-select form-select-lg" data-default="{{ 'ml' if metric else 'cup' }}"></select>
       </div>
       <div class="col-6 col-md-3">
         <label class="form-label" for="convTo">To</label>
-        <select id="convTo" class="form-select form-select-lg"></select>
+        <select id="convTo" class="form-select form-select-lg" data-default="{{ 'cup' if metric else 'ml' }}"></select>
       </div>
       <div class="col-12 col-md-3">
         <label class="form-label d-block">Result</label>
@@ -82,6 +84,16 @@
       <div class="card-body">
         <table class="table table-sm table-borderless align-middle mb-0 fs-5">
           <tbody>
+            {% if metric %}
+            <tr><td>5 ml</td><td class="text-end">1 teaspoon (tsp)</td></tr>
+            <tr><td>15 ml</td><td class="text-end">1 tablespoon (tbsp)</td></tr>
+            <tr><td>30 ml</td><td class="text-end">1 fluid ounce (fl oz)</td></tr>
+            <tr><td>60 ml</td><td class="text-end">1/4 cup</td></tr>
+            <tr><td>125 ml</td><td class="text-end">about 1/2 cup</td></tr>
+            <tr><td>250 ml</td><td class="text-end">about 1 cup</td></tr>
+            <tr><td>500 ml</td><td class="text-end">about 2 cups</td></tr>
+            <tr><td>1 liter (L)</td><td class="text-end">about 4 1/4 cups</td></tr>
+            {% else %}
             <tr><td>1 teaspoon (tsp)</td><td class="text-end">5 ml</td></tr>
             <tr><td>1 tablespoon (tbsp)</td><td class="text-end">15 ml</td></tr>
             <tr><td>1 fluid ounce (fl oz)</td><td class="text-end">30 ml</td></tr>
@@ -92,6 +104,7 @@
             <tr><td>1 pint (2 cups)</td><td class="text-end">475 ml</td></tr>
             <tr><td>1 quart (4 cups)</td><td class="text-end">950 ml</td></tr>
             <tr><td>1 gallon (4 quarts)</td><td class="text-end">3.8 L</td></tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
@@ -104,6 +117,14 @@
       <div class="card-body">
         <table class="table table-sm table-borderless align-middle mb-0 fs-5">
           <tbody>
+            {% if metric %}
+            <tr><td>25 g</td><td class="text-end">about 0.9 oz</td></tr>
+            <tr><td>50 g</td><td class="text-end">about 1.8 oz</td></tr>
+            <tr><td>100 g</td><td class="text-end">about 3.5 oz</td></tr>
+            <tr><td>250 g</td><td class="text-end">about 8.8 oz</td></tr>
+            <tr><td>500 g</td><td class="text-end">about 1.1 lb</td></tr>
+            <tr><td>1 kilogram (kg)</td><td class="text-end">2.2 lb</td></tr>
+            {% else %}
             <tr><td>1 ounce (oz)</td><td class="text-end">28 g</td></tr>
             <tr><td>2 ounces</td><td class="text-end">57 g</td></tr>
             <tr><td>4 ounces (1/4 lb)</td><td class="text-end">113 g</td></tr>
@@ -111,6 +132,7 @@
             <tr><td>1 pound (lb)</td><td class="text-end">454 g</td></tr>
             <tr><td>2 pounds</td><td class="text-end">907 g</td></tr>
             <tr><td>1 kilogram (kg)</td><td class="text-end">2.2 lb</td></tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
@@ -123,15 +145,24 @@
       <div class="card-body">
         <table class="table table-sm align-middle mb-3 fs-5">
           <thead>
-            <tr><th>Fahrenheit</th><th class="text-end">Celsius</th></tr>
+            {% if metric %}<tr><th>Celsius</th><th class="text-end">Fahrenheit</th></tr>{% else %}<tr><th>Fahrenheit</th><th class="text-end">Celsius</th></tr>{% endif %}
           </thead>
           <tbody>
+            {% if metric %}
+            <tr><td>160 &deg;C</td><td class="text-end">320 &deg;F</td></tr>
+            <tr><td>180 &deg;C</td><td class="text-end">356 &deg;F</td></tr>
+            <tr><td>190 &deg;C</td><td class="text-end">374 &deg;F</td></tr>
+            <tr><td>200 &deg;C</td><td class="text-end">392 &deg;F</td></tr>
+            <tr><td>220 &deg;C</td><td class="text-end">428 &deg;F</td></tr>
+            <tr><td>230 &deg;C</td><td class="text-end">446 &deg;F</td></tr>
+            {% else %}
             <tr><td>325 &deg;F</td><td class="text-end">163 &deg;C</td></tr>
             <tr><td>350 &deg;F</td><td class="text-end">177 &deg;C</td></tr>
             <tr><td>375 &deg;F</td><td class="text-end">191 &deg;C</td></tr>
             <tr><td>400 &deg;F</td><td class="text-end">204 &deg;C</td></tr>
             <tr><td>425 &deg;F</td><td class="text-end">218 &deg;C</td></tr>
             <tr><td>450 &deg;F</td><td class="text-end">232 &deg;C</td></tr>
+            {% endif %}
           </tbody>
         </table>
         <p class="text-secondary mb-0">Formula: C = (F &minus; 32) &times; 5/9, and F = (C &times; 9/5) + 32.</p>
