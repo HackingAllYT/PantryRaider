@@ -111,6 +111,9 @@ _SORT_KEYS = {
 }
 _REVERSED_SORTS = {"name_desc", "added_desc"}
 
+# The dashboard key that carries the Grocy product group list.
+PRODUCT_GROUPS_KEY = "_product_groups"
+
 
 class MoveRequest(BaseModel):
     bucket: str  # any built-in or custom category key (grocy.move_product validates)
@@ -188,7 +191,13 @@ async def get_dashboard(sort: str = "expiry_asc"):
 
     # Built-in + custom buckets, plus "other" for anything unclassified.
     buckets = category_keys() + ["other"]
-    return {
+    out = {
         bucket: [i for i in items if i["storage_bucket"] == bucket]
         for bucket in buckets
     }
+    # Every Grocy product group, custom ones included, for the page's category
+    # filter (FoodAssistant-7xddm). The underscore keeps it apart from the
+    # bucket keys, and a custom bucket that somehow took the same key wins.
+    if PRODUCT_GROUPS_KEY not in out:
+        out[PRODUCT_GROUPS_KEY] = grocy.dashboard_product_groups()
+    return out

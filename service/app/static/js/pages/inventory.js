@@ -54,6 +54,7 @@ function renderPanel(panelId, countId, items, bucket) {
     <div class="item-row" id="${rowId(item.product_id, loc)}" draggable="true"
          data-product-id="${item.product_id}" data-location-id="${loc || ''}"
          data-bucket="${bucket}" data-name="${PR.esc(item.name)}"
+         data-search="${PR.esc(searchKey(item.name))}" data-group="${PR.esc(groupKey(item))}"
          data-on-dragstart="dragStart(event)" data-on-dragend="dragEnd(event)">
       <div class="item-name">
         <div class="item-name-text" title="${PR.esc(item.name)}${item.added_date ? ', added ' + item.added_date.slice(0,10) : ''}">${PR.esc(item.name)}</div>
@@ -276,6 +277,10 @@ async function loadDashboard() {
     const allItems = PANEL_KEYS.flatMap(k => data[k] || []);
     storeItems(allItems);
     PANEL_KEYS.forEach(k => renderPanel(`panel-${k}`, `count-${k}`, data[k] || [], k));
+    // The new rows go through the same filter the user left in place, so a
+    // sort change or an edit, move or use never resets it.
+    fillCategories(data._product_groups || [], allItems);
+    applyFilter();
   } catch(e) {
     document.getElementById('inventory-status-text').textContent = e.message;
     const hint = document.getElementById('inventory-status-hint');
@@ -289,6 +294,7 @@ async function loadDashboard() {
         '<div class="panel-empty">Unavailable right now</div>';
       document.getElementById(`count-${b}`).textContent = '–';
     });
+    showNoMatch(false);
   } finally {
     document.getElementById('loading-spinner').style.display = 'none';
   }
@@ -351,13 +357,12 @@ async function consume(productId, amount, name, locationId, where) {
     const row = document.getElementById(rowId(productId, locationId));
     if (row) row.remove();
     showToast(`✓ Consumed: ${name}`);
-    // Update panel count
+    // Update panel counts, through the filter so a filtered list stays filtered
     PANEL_KEYS.forEach(b => {
       const panel = document.getElementById(`panel-${b}`);
-      const rows = panel.querySelectorAll('.item-row').length;
-      if (rows === 0) renderPanel(`panel-${b}`, `count-${b}`, []);
-      else document.getElementById(`count-${b}`).textContent = rows;
+      if (!panel.querySelector('.item-row')) renderPanel(`panel-${b}`, `count-${b}`, []);
     });
+    applyFilter();
   } catch(e) {
     showToast(`Could not mark ${name} consumed: ${e.message}`, true);
   }
@@ -387,6 +392,147 @@ function showToast(msg, isError = false) {
   document.getElementById('toastMsg').textContent = msg;
   new bootstrap.Toast(toast, { delay: 3000 }).show();
 }
+
+// Search and category filter (FoodAssistant-7xddm). Every row is already on
+// the page, so filtering only hides and shows rows: no request per keystroke,
+// and nothing moves between panels or changes in the inventory. The category
+// choice is remembered in this browser; the search text is not.
+const CATEGORY_STORE_KEY = 'inv_category';
+const NO_GROUP = 'none';
+const searchInput = document.getElementById('invSearch');
+const searchClear = document.getElementById('invSearchClear');
+const categorySelect = document.getElementById('invCategory');
+
+// Lower case with accents dropped, so "creme" finds "Crème fraîche".
+function searchKey(text) {
+  return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function groupKey(item) {
+  return item.product_group_id != null ? String(item.product_group_id) : NO_GROUP;
+}
+
+function readSavedCategory() {
+  try { return localStorage.getItem(CATEGORY_STORE_KEY) || ''; } catch (e) { return ''; }
+}
+
+function saveCategory(value) {
+  try {
+    if (value) localStorage.setItem(CATEGORY_STORE_KEY, value);
+    else localStorage.removeItem(CATEGORY_STORE_KEY);
+  } catch (e) { }
+}
+
+// Every Grocy product group (custom ones too), plus any group a stocked item
+// names that the list missed, then "No category" when an item has none.
+// The current choice survives the rebuild; a group that no longer exists falls
+// back to All categories.
+function fillCategories(groups, items) {
+  const names = new Map();
+  groups.forEach(g => { if (g && g.id != null && g.name) names.set(String(g.id), g.name); });
+  let anyUngrouped = false;
+  items.forEach(i => {
+    if (i.product_group_id == null) anyUngrouped = true;
+    else if (!names.has(String(i.product_group_id))) {
+      names.set(String(i.product_group_id), i.product_group_name || i.category || 'Unnamed category');
+    }
+  });
+  const wanted = categorySelect.value || readSavedCategory();
+  const sorted = [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  let html = '<option value="">All categories</option>';
+  html += sorted.map(([id, name]) => `<option value="${PR.esc(id)}">${PR.esc(name)}</option>`).join('');
+  if (anyUngrouped) html += `<option value="${NO_GROUP}">No category</option>`;
+  categorySelect.innerHTML = html;
+  const known = wanted === NO_GROUP ? anyUngrouped : names.has(wanted);
+  categorySelect.value = known ? wanted : '';
+}
+
+function showNoMatch(on) {
+  const box = document.getElementById('invNoMatch');
+  box.classList.toggle('d-none', !on);
+  box.classList.toggle('d-flex', on);
+}
+
+let filterAnnounceTimer = null;
+
+function applyFilter() {
+  const q = searchKey(searchInput.value.trim());
+  const group = categorySelect.value;
+  const active = !!(q || group);
+  searchClear.classList.toggle('d-none', !searchInput.value);
+  let shownTotal = 0;
+  let rowsTotal = 0;
+  PANEL_KEYS.forEach(k => {
+    const body = document.getElementById(`panel-${k}`);
+    const rows = body.querySelectorAll('.item-row');
+    let shown = 0;
+    rows.forEach(row => {
+      const match = (!q || (row.dataset.search || '').includes(q))
+        && (!group || row.dataset.group === group);
+      row.classList.toggle('d-none', !match);
+      if (match) shown += 1;
+    });
+    shownTotal += shown;
+    rowsTotal += rows.length;
+    // An empty panel keeps its own "Empty" line and plain count.
+    if (!rows.length) return;
+    const cnt = document.getElementById(`count-${k}`);
+    cnt.textContent = active ? `${shown} of ${rows.length}` : rows.length;
+    cnt.title = active ? `${shown} of ${rows.length} items match` : '';
+    // A panel with no matches stays where it is, folded to one short line.
+    let note = body.querySelector('.panel-nomatch');
+    if (active && shown === 0) {
+      if (!note) {
+        note = document.createElement('div');
+        note.className = 'panel-nomatch';
+        note.textContent = 'No matches here';
+        body.prepend(note);
+      }
+    } else if (note) {
+      note.remove();
+    }
+  });
+  showNoMatch(active && rowsTotal > 0 && shownTotal === 0);
+  // One spoken summary once typing pauses, not one per keystroke.
+  clearTimeout(filterAnnounceTimer);
+  filterAnnounceTimer = setTimeout(() => {
+    document.getElementById('invFilterStatus').textContent = !active ? ''
+      : shownTotal === 0 ? 'No matching items'
+      : `${shownTotal} ${shownTotal === 1 ? 'item matches' : 'items match'}`;
+  }, 500);
+}
+
+function clearSearch() {
+  searchInput.value = '';
+  applyFilter();
+}
+
+function clearFilters() {
+  searchInput.value = '';
+  categorySelect.value = '';
+  saveCategory('');
+  applyFilter();
+  searchInput.focus();
+}
+
+searchInput.addEventListener('input', applyFilter);
+searchInput.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && searchInput.value) {
+    ev.preventDefault();
+    clearSearch();
+  } else if (ev.key === 'Enter') {
+    // The list is already filtered; Enter just puts the keyboard away so the
+    // results are not hidden behind it (on a phone or the kitchen screen).
+    ev.preventDefault();
+    searchInput.blur();
+  }
+});
+searchClear.addEventListener('click', () => { clearSearch(); searchInput.focus(); });
+categorySelect.addEventListener('change', () => {
+  saveCategory(categorySelect.value);
+  applyFilter();
+});
+document.getElementById('invClearFilters').addEventListener('click', clearFilters);
 
 // Collapsible panels. The open/closed state is remembered in this browser;
 // when site data is blocked (or the saved value is damaged) the panels just

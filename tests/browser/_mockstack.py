@@ -51,6 +51,9 @@ GROUPS = [
     {"id": 3, "name": "Produce"}, {"id": 4, "name": "Meat"},
     {"id": 5, "name": "Seafood"}, {"id": 6, "name": "Grains"},
     {"id": 7, "name": "Canned"}, {"id": 8, "name": "Condiments"},
+    # A group of the user's own with nothing stocked in it: the Inventory
+    # page's category filter still lists it.
+    {"id": 9, "name": "Holiday Baking"},
 ]
 
 # name, qty, unit, location_id, group_id, days-until-best-by

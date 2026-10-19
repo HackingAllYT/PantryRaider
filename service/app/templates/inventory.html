@@ -93,6 +93,16 @@
   .panel-{{ c.key }} { border-color: {{ c.bg }} !important; }
   {% endfor %}
   #loading-spinner { display: none; }
+  /* Search and category filter (FoodAssistant-7xddm). The browser's own clear
+     cross on a search box is hidden: the page has one clear button of its own
+     that is big enough to tap. */
+  #invSearch::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+  #invSearchClear { min-width: 44px; }
+  .panel-nomatch {
+    color: var(--bs-secondary-color);
+    font-size: 0.85rem;
+    padding: 0.6rem 1rem;
+  }
 </style>
 
 <!-- Top bar: sort + refresh -->
@@ -118,6 +128,36 @@
     </button>
     <span id="loading-spinner" class="spinner-border spinner-border-sm text-secondary"></span>
   </div>
+</div>
+
+<!-- Search and category filter (FoodAssistant-7xddm). Rows are filtered in
+     place in the browser; nothing moves and nothing is saved to the inventory. -->
+<div class="row g-2 mb-3" id="inventory-filters" role="search" aria-label="Filter your inventory">
+  <div class="col-12 col-md-7 col-lg-8">
+    <label class="visually-hidden" for="invSearch">Search your inventory by name</label>
+    <div class="input-group">
+      <span class="input-group-text" aria-hidden="true"><i class="bi bi-search"></i></span>
+      <input type="search" class="form-control" id="invSearch" placeholder="Search your inventory"
+             autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"
+             aria-controls="panels">
+      <button type="button" class="btn btn-outline-secondary d-none" id="invSearchClear"
+              aria-label="Clear search" title="Clear search">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+  </div>
+  <div class="col-12 col-md-5 col-lg-4">
+    <label class="visually-hidden" for="invCategory">Show one category</label>
+    <select class="form-select" id="invCategory" aria-controls="panels">
+      <option value="">All categories</option>
+    </select>
+  </div>
+</div>
+<div class="visually-hidden" id="invFilterStatus" role="status" aria-live="polite"></div>
+<div class="alert alert-secondary d-none align-items-center flex-wrap gap-2" id="invNoMatch">
+  <i class="bi bi-search"></i>
+  <span class="me-auto">No matching items.</span>
+  <button type="button" class="btn btn-outline-secondary" id="invClearFilters">Clear filters</button>
 </div>
 
 <!-- Outage banner (FoodAssistant-2cmm): shown when the inventory data cannot

@@ -59,7 +59,7 @@ All AI features are optional. You can run Pantry Raider without any AI provider 
 
 ## Features
 
-- **Inventory dashboard**: panels for Refrigerated, Frozen, Room Temp, Pantry (plus custom storage locations you define), with drag-and-drop moves, inline edits, and sorting
+- **Inventory dashboard**: panels for Refrigerated, Frozen, Room Temp, Pantry (plus custom storage locations you define), with drag-and-drop moves, inline edits, sorting, and a search box and category filter that narrow every panel as you type
 - **Photo analysis**: photograph a food item and a vision model extracts name, brand, quantity, and any printed best-by date
 - **Receipt import**: photograph a grocery receipt and every food line item is extracted and queued for review
 - **Receipt prices**: photograph a receipt from the Shopping page and the prices you actually paid are matched to your pantry items and recorded on each product's newest stock entry in Grocy, so price history reflects real prices; you review the pairings before anything is written, and the photo is read in the background so you can leave the page

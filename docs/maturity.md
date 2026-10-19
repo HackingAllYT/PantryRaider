@@ -29,7 +29,7 @@ releases ago.
 
 | Capability | Maturity | Notes |
 |---|---|---|
-| Inventory dashboard (Grocy) | Stable | The oldest and most exercised part of the app: storage panels, drag-and-drop moves, inline edits, expiry badges. Grocy itself is the battle-tested backbone. |
+| Inventory dashboard (Grocy) | Stable | The oldest and most exercised part of the app: storage panels, drag-and-drop moves, inline edits, expiry badges, search and a category filter. Grocy itself is the battle-tested backbone. |
 | Custom storage locations | Stable | Buckets beyond the four built-ins have been in since 0.1.0 and are widely used. |
 | Expiry defaults (rules table) | Stable | The editable best-by rules by product type; every scan path runs through them and they are covered by tests. |
 | Barcode lookup (Open Food Facts) | Stable | Camera, USB/wireless scanner, or manual entry, backed by Open Food Facts. Established and well tested; product data quality depends on the Open Food Facts catalog. |

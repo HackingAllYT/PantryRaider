@@ -873,6 +873,23 @@ class GrocyClient:
             entry["location_name"] = locations.get(loc_id, "")
             entry["unit_name"] = _stock_unit_name(entry, product, units) or ""
 
+    def dashboard_product_groups(self) -> list[dict]:
+        """Every Grocy product group as ``{"id", "name"}``, sorted by name.
+
+        Read from the rows the last get_full_stock call on this client already
+        fetched, so the Inventory page's category filter costs no request of
+        its own. Before that call it is an empty list."""
+        out = []
+        for g in getattr(self, "_dashboard_groups", None) or []:
+            try:
+                gid = int(g.get("id"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            name = str(g.get("name") or "").strip()
+            if name:
+                out.append({"id": gid, "name": name})
+        return sorted(out, key=lambda g: (g["name"].lower(), g["id"]))
+
     async def get_full_stock(self) -> list[dict]:
         """Return all stock entries enriched with name, location, days_remaining, urgency, and storage bucket."""
         # None of these four reads depends on another, so the dashboard waits
@@ -900,6 +917,7 @@ class GrocyClient:
         units = {str(u.get("id")): u.get("name") for u in unit_rows if u.get("id") is not None}
         locations = {str(loc["id"]): loc["name"] for loc in location_rows}
         groups = {str(g["id"]): g["name"] for g in group_rows}
+        self._dashboard_groups = group_rows   # for dashboard_product_groups()
         # The Opened badge hangs on amount_opened, which /stock already carries,
         # so it is merged here rather than costing the dashboard a second
         # /stock fetch of its own (FoodAssistant-oyef, ydj2a).
@@ -931,6 +949,13 @@ class GrocyClient:
                 "name": name,
                 "unit": _stock_unit_name(entry, product, units),
                 "category": groups.get(group_id, ""),
+                # The same group by id and name, for the Inventory page's
+                # category filter. No group, or a group since deleted, is
+                # None and "" (the page's "No category").
+                "product_group_id": (int(group_id)
+                                     if group_id in groups and group_id.isdigit()
+                                     else None),
+                "product_group_name": groups.get(group_id, ""),
                 "added_date": added.get(pid),
                 # The product's total across every location, for callers
                 # (the recipe matcher) that ask "is there enough of it".
