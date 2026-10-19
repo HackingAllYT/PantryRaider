@@ -118,6 +118,25 @@ function storeItems(items) {
 // Edit modal
 let editTarget = null;  // product_id
 
+// The template's built-in categories, read once so they stay on offer even
+// before a Grocy group of that name exists (saving one creates it).
+const BUILTIN_EDIT_CATEGORIES = [...document.getElementById('editCategory').options]
+  .map(o => o.value).filter(Boolean);
+
+// Grocy's own product groups (custom ones like Supplements too) join the
+// built-ins, so the Edit menu offers every category the filter does.
+function fillEditCategories(groupNames) {
+  const sel = document.getElementById('editCategory');
+  const byKey = new Map();
+  [...BUILTIN_EDIT_CATEGORIES, ...groupNames].forEach(name => {
+    const key = searchKey(name);
+    if (name && !byKey.has(key)) byKey.set(key, name);
+  });
+  const names = [...byKey.values()].sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">(unchanged)</option>'
+    + names.map(n => `<option value="${PR.esc(n)}">${PR.esc(n)}</option>`).join('');
+}
+
 function openEditModal(productId) {
   const item = itemsById[productId];
   if (!item) return;
@@ -443,6 +462,7 @@ function fillCategories(groups, items) {
   html += sorted.map(([id, name]) => `<option value="${PR.esc(id)}">${PR.esc(name)}</option>`).join('');
   if (anyUngrouped) html += `<option value="${NO_GROUP}">No category</option>`;
   categorySelect.innerHTML = html;
+  fillEditCategories([...names.values()]);
   const known = wanted === NO_GROUP ? anyUngrouped : names.has(wanted);
   categorySelect.value = known ? wanted : '';
 }

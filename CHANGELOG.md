@@ -10,6 +10,14 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.112] - 2026-10-19
+
+### Added
+- **The phone camera scanner fills the screen and keeps scanning.** Start Camera on Manage Pantry now opens a full-screen scanner that stays open between scans, so you can stock up, use up or count a pile of groceries without tapping Start for each one. A barcode held in view counts once; move it away and back to scan it again. Each read gives a green flash and a short vibration, with an optional beep, and a flashlight button appears when your phone's camera has one. Your sound and vibration choices are remembered on this phone. Product names that finish looking up after you have moved on show up in their own notice, so they never cover what you just scanned. Close the camera with the cross when you are done. Thanks to @davidrainer for building it.
+
+### Fixed
+- **Edit on the Inventory page offers your own Grocy categories.** The Category menu in an item's Edit window only listed the built-in categories, so you could filter by a group you made yourself, such as Supplements, but not move an item into it. It now lists every Grocy product group alongside the built-in ones. Thanks to @davidrainer for the report.
+
 ## [0.21.109] - 2026-10-19
 
 ### Added

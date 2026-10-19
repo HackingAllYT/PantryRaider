@@ -142,3 +142,17 @@ def test_filter_fits_a_phone(new_page):
     page.fill("#invSearch", "rice")
     assert _visible(page, "pantry") == ["Jasmine Rice"]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+def test_edit_dialog_offers_every_grocy_group(new_page):
+    # GitHub #124: a custom group the filter lists must be choosable in Edit too.
+    page = new_page("/ui/inventory")
+    _ready(page)
+    page.click("#panel-pantry .item-row [data-on-click^='openEditModal']")
+    page.wait_for_selector("#editModal.show")
+    options = page.eval_on_selector_all("#editCategory option", "os => os.map(o => o.textContent)")
+    assert options[0] == "(unchanged)"
+    assert "Holiday Baking" in options          # custom group, nothing stocked
+    assert "Poultry" in options                 # built-ins stay on offer
+    lowered = [o.lower() for o in options]
+    assert len(lowered) == len(set(lowered))    # no name twice
