@@ -18,7 +18,15 @@ const URGENCY_BADGE = {
   unknown: ['badge-unknown', 'No date'],
 };
 
+// The best-by date Grocy gives stock that never expires.
+const NEVER_EXPIRES = '2999-12-31';
+
 function expiryBadge(item) {
+  // Counted in days, stock that never expires would read several hundred
+  // thousand of them.
+  if (item.best_before_date === NEVER_EXPIRES) {
+    return '<span class="expiry-badge badge-unknown">No expiry</span>';
+  }
   const u = item.urgency;
   const cls = (URGENCY_BADGE[u] || URGENCY_BADGE.unknown)[0];
   let label;
@@ -32,6 +40,41 @@ function expiryBadge(item) {
     label = 'No date';
   }
   return `<span class="expiry-badge ${cls}">${label}</span>`;
+}
+
+// A best-by date as "Oct 24", in the browser's own language. The year joins
+// it only for a date more than 300 days away, so a freezer date next autumn
+// does not read as this autumn's.
+function shortDate(iso) {
+  const day = new Date(`${iso}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const opts = { month: 'short', day: 'numeric' };
+  if (Math.abs(Math.round((day - today) / 86400000)) > 300) opts.year = 'numeric';
+  return day.toLocaleDateString(undefined, opts);
+}
+
+// How much of a row's stock has one best-by date, the amount written the way
+// the row's own is: "2 by Oct 24", "1 with no date", "3 with no expiry".
+function bestByPart(entry) {
+  const n = entry.amount % 1 === 0 ? entry.amount : entry.amount.toFixed(1);
+  if (!entry.best_before_date) return `${n} with no date`;
+  if (entry.best_before_date === NEVER_EXPIRES) return `${n} with no expiry`;
+  return `${n} by ${shortDate(entry.best_before_date)}`;
+}
+
+// The line under the name of a row whose stock has more than one best-by
+// date, earliest first. The first three show and the rest are counted; the
+// title lists them all. Screen readers hear a comma where the dot is, and a
+// line that wraps on a phone breaks between dates, never inside one.
+function bestByLine(dates) {
+  const parts = dates.map(bestByPart);
+  const sep = '<span aria-hidden="true"> · </span><span class="visually-hidden">, </span>';
+  let shown = parts.slice(0, 3).map(p => `<span class="text-nowrap">${PR.esc(p)}</span>`).join(sep);
+  if (parts.length > 3) shown += ` <span class="text-nowrap">+${parts.length - 3} more</span>`;
+  return `<div class="item-dates" title="${PR.esc(parts.join(' · '))}">`
+    + '<i class="bi bi-calendar3 me-1" aria-hidden="true"></i>'
+    + `<span class="visually-hidden">Best-by dates: </span>${shown}</div>`;
 }
 
 
@@ -59,6 +102,7 @@ function renderPanel(panelId, countId, items, bucket) {
       <div class="item-name">
         <div class="item-name-text" title="${PR.esc(item.name)}${item.added_date ? ', added ' + item.added_date.slice(0,10) : ''}">${PR.esc(item.name)}</div>
         ${showLoc ? `<div class="item-location"><i class="bi bi-geo-alt me-1"></i>${PR.esc(item.location_name)}</div>` : ''}
+        ${item.best_by_dates && item.best_by_dates.length > 1 ? bestByLine(item.best_by_dates) : ''}
       </div>
       ${showAdded && item.added_date ? `<span class="item-qty">${item.added_date.slice(0,10)}</span>` : ''}
       <span class="item-qty">${item.amount % 1 === 0 ? item.amount : item.amount.toFixed(1)}${item.unit ? ' ' + PR.esc(item.unit) : ''}</span>
@@ -274,9 +318,7 @@ async function moveItem(productId, bucket, name, locationId) {
     const d = await r.json().catch(() => ({}));
     let msg = `✓ Moved ${name} to ${BUCKET_LABELS[bucket]}`;
     if (d.new_best_by && d.best_by_change) {
-      const nice = new Date(`${d.new_best_by}T00:00:00`)
-        .toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      msg += `, best-by ${d.best_by_change} to ${nice}`;
+      msg += `, best-by ${d.best_by_change} to ${shortDate(d.new_best_by)}`;
     }
     showToast(msg);
     await loadDashboard();
@@ -290,7 +332,9 @@ async function loadDashboard() {
   document.getElementById('loading-spinner').style.display = '';
   const status = document.getElementById('inventory-status');
   try {
-    const r = await fetch(`inventory/dashboard?sort=${sort}`);
+    // dates=breakdown adds the list of best-by dates to a row that holds
+    // more than one; without it the reply is the plain one Home Assistant reads.
+    const r = await fetch(`inventory/dashboard?sort=${sort}&dates=breakdown`);
     if (!r.ok) {
       // Outages answer with a JSON detail written for people ("Your inventory
       // is not reachable right now..."), so surface that, never a raw error

@@ -172,11 +172,21 @@ async def move_item(product_id: int, body: MoveRequest, db: Session = Depends(ge
 
 
 @router.get("/dashboard")
-async def get_dashboard(sort: str = "expiry_asc"):
-    """Return stock grouped by storage bucket, sorted by the requested key."""
+async def get_dashboard(sort: str = "expiry_asc", dates: str = ""):
+    """Return stock grouped by storage bucket, sorted by the requested key.
+
+    ``dates=breakdown`` is the Inventory page's own reading: a row whose
+    stock has more than one best-by date also lists them. Without it the
+    reply is the one the Home Assistant sensor has always read.
+    """
     grocy = GrocyClient()
     try:
-        items = await grocy.get_full_stock()
+        # Any other value reads the rows through the plain call, the one every
+        # other caller of get_full_stock makes.
+        if dates == "breakdown":
+            items = await grocy.get_full_stock(dates="breakdown")
+        else:
+            items = await grocy.get_full_stock()
     except GrocyError as e:
         # 502 with honest copy, never a raw 500: the dashboard renders the
         # detail as its outage banner (FoodAssistant-2cmm). A Grocy-reported

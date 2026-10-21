@@ -737,8 +737,8 @@ def test_inventory_dashboard_url_respects_ingress_prefix(client):
     assert response.status_code == 200
     assert '<base href="/api/hassio_ingress/test-token/">' in response.text
     page = with_page_scripts(response.text)
-    assert "fetch(`inventory/dashboard?sort=${sort}`)" in page
-    assert "fetch(`/inventory/dashboard?sort=${sort}`)" not in page
+    assert "fetch(`inventory/dashboard?sort=${sort}&dates=breakdown`)" in page
+    assert "fetch(`/inventory/dashboard" not in page
 
 
 def test_root_redirect_keeps_ingress_prefix(client):

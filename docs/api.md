@@ -213,6 +213,8 @@ itself exposes a `POST /restore` it proxies to, but this file documents the app 
 
 `GET /inventory/dashboard` returns JSON matching the Grocy stock structure, grouped by storage category. This is the endpoint the Home Assistant Lovelace dashboard polls.
 
+`GET /inventory/dashboard?dates=breakdown`: the Inventory page's own reading of the same rows. A row whose stock in that place has more than one best-by date also carries `best_by_dates`, a list of `{"best_before_date", "amount"}` with the earliest date first and undated stock (`null`) last. Each row's `amount`, `amount_opened` and `best_before_date` then come from that place's own stock entries, and a product with no stock of its own (a parent product whose stock all sits in its sub-products) is left out. Without `dates`, or with any other value, the reply is unchanged.
+
 `GET /expiring/summary` returns urgency bucket counts:
 
 ```json

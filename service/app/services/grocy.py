@@ -457,6 +457,51 @@ def stock_by_location(stock_rows: list[dict]) -> dict[int, dict[str, dict]]:
     return out
 
 
+# Amounts at or below this are float dust Grocy leaves behind (a consume that
+# spans a 0.1 and a 0.2 row can leave 2.8e-17 of one); they are not stock.
+_DUST = 1e-9
+
+
+def stock_by_location_and_date(stock_rows: list[dict]) -> dict[int, dict[str, dict]]:
+    """Product id -> location id -> best-by date -> {amount, amount_opened,
+    added}, from the raw /objects/stock rows. Pure.
+
+    stock_by_location one level down: stock bought on different days keeps
+    each purchase's best-by date, so one place can hold several. A row with
+    no location is filed under "", one with no date under None. ``added`` is
+    the newest row's creation time (its purchase date when it has none). Rows
+    without a product, and dust, are skipped.
+    """
+    out: dict[int, dict[str, dict]] = {}
+    for row in stock_rows or []:
+        try:
+            pid = int(row.get("product_id") or 0)
+            amount = float(row.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not pid or amount <= _DUST:
+            continue
+        loc = str(row.get("location_id") or "")
+        part = out.setdefault(pid, {}).setdefault(loc, {}).setdefault(
+            row.get("best_before_date") or None,
+            {"amount": 0.0, "amount_opened": 0.0, "added": None})
+        part["amount"] += amount
+        if str(row.get("open") or "0") not in ("0", "", "False", "false"):
+            part["amount_opened"] += amount
+        added = row.get("row_created_timestamp") or row.get("purchased_date")
+        if added and (part["added"] is None or added > part["added"]):
+            part["added"] = added
+    return out
+
+
+def best_by_breakdown(parts: dict) -> list[dict]:
+    """One place's stock_by_location_and_date entry as a list of
+    ``{"best_before_date", "amount"}``, earliest date first and undated stock
+    last. Pure."""
+    return [{"best_before_date": bbd, "amount": parts[bbd]["amount"]}
+            for bbd in sorted(parts, key=lambda d: (d is None, d or ""))]
+
+
 def _location_id(entry: dict) -> int:
     try:
         return int(entry.get("location_id") or 0)
@@ -890,8 +935,17 @@ class GrocyClient:
                 out.append({"id": gid, "name": name})
         return sorted(out, key=lambda g: (g["name"].lower(), g["id"]))
 
-    async def get_full_stock(self) -> list[dict]:
-        """Return all stock entries enriched with name, location, days_remaining, urgency, and storage bucket."""
+    async def get_full_stock(self, *, dates: str = "") -> list[dict]:
+        """Return all stock entries enriched with name, location, days_remaining, urgency, and storage bucket.
+
+        ``dates="breakdown"`` is the Inventory page's reading of the same rows.
+        Each place's amount, opened amount and earliest best-by come from that
+        place's own stock entries, a place holding more than one best-by date
+        also lists them as ``best_by_dates`` (best_by_breakdown), and a product
+        with no stock of its own is left out. Without it the rows are the ones
+        every other caller, the Home Assistant sensor among them, has always
+        had.
+        """
         # None of these four reads depends on another, so the dashboard waits
         # once instead of four times over. return_exceptions keeps a Grocy
         # outage (which fails all four at once) from leaving three exceptions
@@ -936,6 +990,11 @@ class GrocyClient:
         # location, so stock kept in two places showed its whole total in one
         # (#73). The raw rows carry the real location_id of every entry.
         by_location = stock_by_location(stock_rows)
+        # The breakdown reads every place from the raw rows alone, date by
+        # date. /stock's best-by for a product kept in one place also counts
+        # its sub-products' stock, so that row could show a date missing from
+        # its own list of dates.
+        by_date = stock_by_location_and_date(stock_rows) if dates == "breakdown" else {}
         today = date.today()
         result = []
         for entry in raw:
@@ -944,6 +1003,10 @@ class GrocyClient:
             pid = int(entry.get("product_id", 0))
             group_id = str(product.get("product_group_id") or "")
             total = float(entry.get("amount") or 0)
+            # Float dust, or a parent product whose stock all sits in its
+            # sub-products (they have rows of their own): nothing to list.
+            if dates == "breakdown" and total <= _DUST:
+                continue
             row = {
                 "product_id": pid,
                 "name": name,
@@ -962,7 +1025,21 @@ class GrocyClient:
                 "product_amount": total,
             }
             splits = by_location.get(pid)
-            if not splits or len(splits) < 2:
+            places = by_date.get(pid)
+            if places:
+                # Every place from its own rows. Stock kept in one place is
+                # filed where the plain reading files it: under the product's
+                # default location when its rows record none.
+                if len(places) == 1:
+                    only = next(iter(places))
+                    places = {only or str(entry.get("location_id")
+                                          or product.get("location_id") or ""): places[only]}
+                splits = {loc_id: {
+                    "amount": sum(p["amount"] for p in parts.values()),
+                    "amount_opened": sum(p["amount_opened"] for p in parts.values()),
+                    "best_before_date": min((d for d in parts if d), default=None),
+                } for loc_id, parts in places.items()}
+            elif not splits or len(splits) < 2:
                 # Prefer the per-entry location_id; fall back to the product's
                 # default, and keep /stock's own amounts and best-by.
                 only = next(iter(splits)) if splits else None
@@ -987,6 +1064,9 @@ class GrocyClient:
                     "storage_bucket": classify_location(loc_name),
                     "amount_opened": part["amount_opened"],
                 })
+                # A row with one best-by date gets no list; its date says it all.
+                if places and len(places[loc_id]) > 1:
+                    result[-1]["best_by_dates"] = best_by_breakdown(places[loc_id])
         return result
 
     async def edit_product(self, product_id: int,

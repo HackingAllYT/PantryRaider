@@ -62,6 +62,19 @@ glance tells you which package is already open. The after-opening shelf life
 comes from the product's own setup in Grocy, so a product without one simply
 keeps the date it had.
 
+## Every best-by date on a row
+
+Food you bought on different days keeps the best-by date of each purchase, but
+the Inventory dashboard lists a product once for each place you keep it, with
+the earliest date on its badge. So when a row holds more than one date, a
+short line under the name lists how many have each date, earliest first, such
+as "2 by Oct 24 · 8 by Nov 20". Two coconut yogurts due in 3 days and a new
+pack of 8 due in a month no longer look like 10 yogurts all due in 3 days.
+Stock without a date shows as "with no date" and stock that never expires as
+"with no expiry", and a row that never expires says No expiry on its badge.
+After three dates the line counts the rest ("+2 more"); point at it with a
+mouse to see them all.
+
 ## Moving food to the freezer adjusts the date for you
 
 Freezing buys time and thawing spends it, so Pantry Raider shifts the best-by

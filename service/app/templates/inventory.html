@@ -43,15 +43,26 @@
   .item-actions { display: flex; gap: 0.25rem; flex-shrink: 0; margin-left: 0.25rem; }
   .panel-header:focus-visible { outline: 2px solid var(--bs-primary); outline-offset: -2px; }
   /* On a phone the four row buttons would squeeze the name to a few letters,
-     so they move to a line of their own under the name. */
+     so they move to a line of their own under the name, and the list of
+     best-by dates may wrap instead of being cut short. */
   @media (max-width: 575.98px) {
     .item-row { flex-wrap: wrap; row-gap: 0.35rem; }
     .item-actions { flex: 1 0 100%; justify-content: flex-end; margin-left: 0; }
+    /* .item-name in front, so this outranks the .item-dates rule below. */
+    .item-name .item-dates { white-space: normal; }
   }
   .item-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Which Grocy location a row's stock sits in, when the panel name does not
      already say so (a product kept in two places is listed once per place). */
   .item-location {
+    font-size: 0.72rem;
+    color: var(--bs-secondary-color);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* How much of a row's stock has each best-by date, when it has more than
+     one. One line like the location above it, so a row stays short in the
+     narrow two-column layout; the title lists every date. */
+  .item-dates {
     font-size: 0.72rem;
     color: var(--bs-secondary-color);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
