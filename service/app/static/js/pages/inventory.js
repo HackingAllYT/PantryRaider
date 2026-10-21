@@ -67,7 +67,7 @@ function renderPanel(panelId, countId, items, bucket) {
       <div class="item-actions">
       <button class="btn btn-outline-secondary btn-icon" title="Edit category / expiry"
               aria-label="Edit ${PR.esc(item.name)}"
-              data-on-click="openEditModal(${item.product_id})">
+              data-on-click="openEditModal(${item.product_id}, ${loc})">
         <i class="bi bi-pencil"></i>
       </button>
       <button class="btn btn-outline-secondary btn-icon" title="Move to another location"
@@ -108,15 +108,18 @@ function rowId(productId, locationId) {
   return `row-${productId}-${locationId || 'none'}`;
 }
 
-// Item lookup map (keyed by product_id) for pre-filling modals
-const itemsById = {};
+// The rows on the page by row id, so the Edit window opens with the values of
+// the row that was clicked: a product kept in two places can have a different
+// best-by date in each. Rebuilt on every load, like the rows themselves.
+const itemsByRow = new Map();
 
 function storeItems(items) {
-  items.forEach(i => { itemsById[i.product_id] = i; });
+  itemsByRow.clear();
+  items.forEach(i => { itemsByRow.set(rowId(i.product_id, i.location_id), i); });
 }
 
 // Edit modal
-let editTarget = null;  // product_id
+let editTarget = null;  // { productId, locationId, shownBestBy }
 
 // The template's built-in categories, read once so they stay on offer even
 // before a Grocy group of that name exists (saving one creates it).
@@ -137,10 +140,9 @@ function fillEditCategories(groupNames) {
     + names.map(n => `<option value="${PR.esc(n)}">${PR.esc(n)}</option>`).join('');
 }
 
-function openEditModal(productId) {
-  const item = itemsById[productId];
+function openEditModal(productId, locationId) {
+  const item = itemsByRow.get(rowId(productId, locationId));
   if (!item) return;
-  editTarget = productId;
   document.getElementById('editModalName').textContent = item.name;
 
   const catSel = document.getElementById('editCategory');
@@ -151,35 +153,46 @@ function openEditModal(productId) {
     catSel.add(opt);
   }
 
-  document.getElementById('editBestBy').value = item.best_before_date || '';
+  // Remembered as shown, so Save can tell whether the date was changed.
+  const dateInput = document.getElementById('editBestBy');
+  dateInput.value = item.best_before_date || '';
+  editTarget = { productId, locationId, shownBestBy: dateInput.value };
   new bootstrap.Modal(document.getElementById('editModal')).show();
 }
 
 async function saveEdit() {
-  if (editTarget == null) return;
+  // The row this Save is for. The window can be opened on another row while
+  // the list reloads after this one, so only this row's target is let go.
+  const target = editTarget;
+  if (target == null) return;
   const btn = document.getElementById('editSaveBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
 
   const category = document.getElementById('editCategory').value || null;
-  const bestBy   = document.getElementById('editBestBy').value || null;
+  // A best-by date is written onto every stock entry of the product, so it is
+  // sent only when it was changed, and null leaves every date as it is. The
+  // pre-filled one, re-sent with a category change, wiped out all the others.
+  const picked = document.getElementById('editBestBy').value;
+  const bestBy = picked !== target.shownBestBy ? (picked || null) : null;
 
   try {
-    const r = await fetch(`inventory/edit/${editTarget}`, {
+    const r = await fetch(`inventory/edit/${target.productId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category, best_before_date: bestBy }),
     });
     if (!r.ok) throw new Error(await prErrText(r));
     bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+    if (editTarget === target) editTarget = null;
     showToast('✓ Item updated');
     await loadDashboard();
   } catch(e) {
+    // The window stays open with its row, so Save can simply be tried again.
     showToast(`Save failed: ${e.message}`, true);
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Save';
-    editTarget = null;
   }
 }
 
