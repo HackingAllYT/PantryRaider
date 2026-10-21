@@ -100,8 +100,10 @@ def test_unit_parses_with_systemd_analyze_when_available(tmp_path):
     proc = subprocess.run(["systemd-analyze", "verify", str(dst)],
                           capture_output=True, text=True)
     out = proc.stdout + proc.stderr
+    # Only complaints about our unit count: a newer systemd also warns about
+    # the host's own units (the CI runner's xfs_scrub slice, for one).
     problems = [ln for ln in out.splitlines()
-                if ln.strip() and "is not executable" not in ln
+                if UNIT.name in ln and "is not executable" not in ln
                 and "No such file" not in ln]
     assert proc.returncode == 0 or problems == [], out
 

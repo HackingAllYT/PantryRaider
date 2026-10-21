@@ -10,7 +10,7 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
-## [0.21.119] - 2026-10-21
+## [0.21.120] - 2026-10-21
 
 ### Added
 - **Fix a product's name once and help every kitchen.** When a scan comes up with the wrong name, brand, or category, the fix you make on the Pending page can now be shared with other Pantry Raider kitchens. It is off unless you turn on Send barcode fixes in Settings, Inventory, and it needs a linked Forager account. A fix is only passed on after several trusted kitchens agree on it, and fixes to products you set up yourself in Grocy are never sent.
