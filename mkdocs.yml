@@ -35,6 +35,7 @@ nav:
   - Remote access: remote-access.md
   - Privacy policy: privacy.md
   - Community shelf life and privacy: community-shelf-life.md
+  - Community barcode fixes: community-barcodes.md
   - Recipes and cooking:
       - "Recipes: built in, Mealie optional": recipe-backend-comparison.md
       - Cook page and Cook wizard: cooking.md

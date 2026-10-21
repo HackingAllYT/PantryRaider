@@ -20,9 +20,9 @@ from . import retention
 from .config import CLOUD_VERSION, settings
 from .database import SessionLocal, init_db
 from .deps import set_session_cookie
-from .routers import (accounts, admin, ai, backup, billing, instances, learn,
-                      oauth_google, passkeys, portal, recipe_upload, recipes,
-                      shares, stripe_webhook, tunnel)
+from .routers import (accounts, admin, ai, backup, barcodes, billing,
+                      instances, learn, oauth_google, passkeys, portal,
+                      recipe_upload, recipes, shares, stripe_webhook, tunnel)
 
 logger = logging.getLogger("forager")
 
@@ -172,6 +172,7 @@ app.include_router(shares.router)
 app.include_router(recipes.router)
 app.include_router(tunnel.router)
 app.include_router(learn.router)
+app.include_router(barcodes.router)
 app.include_router(ai.router)
 app.include_router(backup.router)
 app.include_router(stripe_webhook.router)

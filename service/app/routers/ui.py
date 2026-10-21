@@ -597,20 +597,25 @@ async def add_page(request: Request):
     })
 
 
-def _may_manage_keys(request: Request) -> bool:
-    """Whether this visitor may remove a key from an inbox item.
+def _may_admin(request: Request, path: str) -> bool:
+    """Whether this visitor may POST to an admin route on this install.
 
-    Keys live on the main server, behind its admin rules. A Bandit's inbox is
-    its main server's, so a Bandit never offers the button."""
+    A Bandit's inbox is its main server's, and so are the keys and settings
+    its items talk about, so a Bandit never offers these buttons."""
     if settings.is_satellite():
         return False
     try:
         from ..services import access
-        decision = access.decide(access.principal(request), "POST", "/api/credentials",
+        decision = access.decide(access.principal(request), "POST", path,
                                  "admin", access.snapshot(request))
         return decision.action in ("serve", "serve_grace")
     except Exception:
         return False
+
+
+def _may_manage_keys(request: Request) -> bool:
+    """Whether this visitor may remove a key from an inbox item."""
+    return _may_admin(request, "/api/credentials")
 
 
 @router.get("/pending", response_class=HTMLResponse)
@@ -619,6 +624,8 @@ async def pending_page(request: Request):
         "request": request,
         "active": "pending",
         "manages_keys": _may_manage_keys(request),
+        # May turn kitchen history off from its inbox notice (FoodAssistant-p3ind).
+        "manages_settings": _may_admin(request, "/setup/save"),
     })
 
 

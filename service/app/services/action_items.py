@@ -29,6 +29,7 @@ KIND_LEFTOVER_PROMPT = "leftover_prompt"
 KIND_SYSTEM_WARNING = "system_warning"
 KIND_PAIRED_KEY_UNUSED = "paired_key_unused"
 KIND_STORAGE_REPAIRED = "storage_repaired"
+KIND_KITCHEN_HISTORY = "kitchen_history"
 KIND_GENERIC = "generic"
 
 _VALID_LEVELS = ("info", "success", "warning", "error")

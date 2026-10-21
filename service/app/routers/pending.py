@@ -22,8 +22,8 @@ from ..services.defaults import (apply_defaults, propose_review_best_by,
 from ..services.grocy import (GrocyClient, parse_grocycode, stock_has_product,
                               stock_sniff_candidates)
 from ..services.label_render import prettify_date
-from ..services import (best_by_provenance, expiry_learning, nutrition,
-                        scan_session, scanner_mode, shopping_source, upstream)
+from ..services import (barcode_corrections, best_by_provenance, expiry_learning,
+                        nutrition, scan_session, scanner_mode, shopping_source, upstream)
 from ..storage_categories import classify_location
 
 router = APIRouter(prefix="/pending", tags=["pending"])
@@ -272,6 +272,9 @@ def _row_dict(row: PendingItem, duplicate: bool = False,
         "unit": row.unit,
         "category": row.category,
         "storage_type": row.storage_type,
+        # The Grocy location this row stocks into instead of the storage
+        # area's own, set while a product Grocy already knew keeps it.
+        "grocy_location": row.grocy_location if row.grocy_location_id else None,
         "best_by_date": row.best_by_date,
         "best_by_source": row.best_by_source,
         "brand": row.brand,
@@ -610,7 +613,10 @@ async def grocy_barcode_item(barcode: str, db: Session) -> Optional[tuple[FoodIt
     for cat in FoodCategory:
         if cat.value.lower() == group:
             item.category = cat
+    # The storage area only drives the shelf-life estimate here; the stock
+    # itself goes to the product's own location (see _fill_from_grocy).
     bucket = classify_location(match.get("location") or "")
+    bucket = "dry" if bucket == "pantry" else bucket
     if bucket in StorageType._value2member_map_:
         item.storage_type = StorageType(bucket)
     days = match.get("default_best_before_days") or 0
@@ -652,6 +658,8 @@ async def enrich_pending_item(item_id: int, barcode: str) -> None:
                 row.quantity = scans * match["amount"]
                 row.scan_amount = match["amount"]
                 row.grocy_product_id = match["product_id"]
+                row.grocy_location_id = match.get("location_id")
+                row.grocy_location = match.get("location") or None
                 row.name = item.name
                 row.unit = item.unit
                 row.category = item.category.value
@@ -677,6 +685,9 @@ async def enrich_pending_item(item_id: int, barcode: str) -> None:
             # record provenance and the label badges honestly (FoodAssistant-vb60).
             row.best_by_source = item.best_by_source
             row.brand = item.brand
+            row.lookup_name = item.name
+            row.lookup_brand = item.brand
+            row.lookup_category = item.category.value
             row.lookup_failed = 0
         except BarcodeStoreLocal:
             # A store-assigned/random-weight code can never be resolved: label
@@ -976,6 +987,14 @@ async def update_pending(item_id: int, body: PendingUpdate, request: Request, db
             row.suggested_best_by = row.best_by_date
             row.suggested_source = (row.best_by_source or "none") if row.best_by_date else "none"
         old_storage = row.storage_type
+        if data.get("storage_type") == "grocy":
+            # Picked the product's own Grocy location: the row already stocks
+            # there, so nothing about it changes.
+            data.pop("storage_type")
+        elif "storage_type" in data:
+            # Any storage area picked on review replaces the product's own
+            # location, even one that sorts into the same area.
+            row.grocy_location_id = None
         old_best_by = row.best_by_date
         old_name = row.name
         # A hand-typed date has no recorded source (the best_by_date branch below
@@ -1067,6 +1086,21 @@ def _capture_learning(row: PendingItem) -> bool:
                                   chosen, suggested, row.suggested_source, base)
 
 
+def _capture_barcode_fix(row: PendingItem) -> bool:
+    """Queue the user's fix to a scanned product for the community
+    (FoodAssistant-mypf0). A product the barcode already named in Grocy is
+    the user's own setup, not a fix to the public catalog, so it is never
+    sent, even after a rename on review drops the product link (scan_amount
+    is set only by that Grocy fill and survives the rename).
+    barcode_corrections drops a row the user left as the lookup had it and
+    captures nothing while sharing is off. Never raises."""
+    if row.grocy_product_id or row.scan_amount is not None:
+        return False
+    return barcode_corrections.record(
+        row.barcode, row.name, row.brand, row.category,
+        row.lookup_name, row.lookup_brand, row.lookup_category)
+
+
 def _linkable_barcode(code: Optional[str]) -> Optional[str]:
     """The scanned code to register on the Grocy product, or None.
 
@@ -1096,7 +1130,7 @@ async def commit_pending(body: CommitRequest, request: Request, db: Session = De
             q = q.filter(PendingItem.id.in_(body.ids))
         return [(row.id, row) for row in q.all()]
 
-    def _prepare(row: PendingItem) -> tuple[FoodItem, Optional[int]]:
+    def _prepare(row: PendingItem) -> tuple[FoodItem, Optional[int], Optional[int]]:
         item = FoodItem(
             name=row.name,
             quantity=row.quantity or 1.0,
@@ -1111,7 +1145,7 @@ async def commit_pending(body: CommitRequest, request: Request, db: Session = De
         )
         # Read here with the rest of the row: a commit expires loaded rows,
         # and reloading one belongs in the threadpool, not on the event loop.
-        return apply_defaults(item, db), row.grocy_product_id
+        return apply_defaults(item, db), row.grocy_product_id, row.grocy_location_id
 
     def _finish(row: PendingItem) -> bool:
         # Community shelf-life learning (FoodAssistant-ezkh): a committed
@@ -1119,6 +1153,7 @@ async def commit_pending(body: CommitRequest, request: Request, db: Session = De
         # point, queued only when the sharing opt-in is on. Read before
         # the row is deleted; never blocks a commit.
         learned = _capture_learning(row)
+        _capture_barcode_fix(row)
         db.delete(row)
         db.commit()
         return learned
@@ -1134,11 +1169,12 @@ async def commit_pending(body: CommitRequest, request: Request, db: Session = De
     captured = 0
     for row_id, row in rows:
         try:
-            item, known_product = await run_in_threadpool(_prepare, row)
+            item, known_product, known_location = await run_in_threadpool(_prepare, row)
             if known_product:
                 # Grocy already knew the scanned barcode: stock that product,
                 # in its units, rather than one found or made by name.
-                result = await grocy.add_to_product(known_product, item)
+                result = await grocy.add_to_product(known_product, item,
+                                                    known_location)
             else:
                 result = await grocy.import_item(item)
             if await run_in_threadpool(_finish, row):
@@ -1164,6 +1200,12 @@ async def commit_pending(body: CommitRequest, request: Request, db: Session = De
             await run_in_threadpool(db.rollback)
             results.append({"id": row_id, "status": "error", "error": str(e)})
 
+    if barcode_corrections.sharing_on() and barcode_corrections.queued():
+        import asyncio
+        try:
+            asyncio.create_task(barcode_corrections.flush())
+        except RuntimeError:
+            pass  # no running loop: the periodic pass sends it
     if captured:
         # Fire-and-forget upload of the freshly queued points. Failures leave
         # the queue intact for the periodic pass; the commit never waits.

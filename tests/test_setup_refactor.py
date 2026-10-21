@@ -145,7 +145,8 @@ PINNED = {
             # Added after the pin: the Community shelf life panel on the
             # Inventory pane (FoodAssistant-ezkh): the use-community-estimates
             # toggle and the anonymous sharing opt-in. Main installs only.
-            'share_expiry_learning', 'use_community_expiry',
+            'share_expiry_learning', 'share_barcode_corrections', 'use_community_barcodes',
+            'use_community_expiry', 'use_kitchen_history',
             'scan_cidr', 'scanner-test-input', 'scanner_type',
             'scanner_uart_baud', 'scanner_uart_enabled', 'scanner_uart_port',
             'screensaver_all_clients',
@@ -406,7 +407,8 @@ PINNED = {
             # Added after the pin: the Community shelf life panel on the
             # Inventory pane (FoodAssistant-ezkh). Pi Hosted is a main server,
             # so it carries the same controls.
-            'share_expiry_learning', 'use_community_expiry',
+            'share_expiry_learning', 'share_barcode_corrections', 'use_community_barcodes',
+            'use_community_expiry', 'use_kitchen_history',
             'scan_cidr',
             'scanner-test-input', 'scanner_type',
             'scanner_uart_baud', 'scanner_uart_enabled', 'scanner_uart_port',

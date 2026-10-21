@@ -100,6 +100,26 @@
     {% else %}automatic: any account whose linked kitchen has checked in can
     upload; an account with no kitchen needs the manual allow.{% endif %}
   </p>
+  <div class="actions-row" style="margin-top:0.75rem;">
+    {% for mode, label in [("normal", "Barcode votes: normal"), ("trusted", "Trust barcode votes"), ("blocked", "Block barcode corrections")] %}
+    {% set value = "" if mode == "normal" else mode %}
+    {% if (account.barcode_trust or "") != value %}
+    <form class="inline" method="post" action="/admin/accounts/{{ account.id }}/barcode-trust">
+      <input type="hidden" name="mode" value="{{ mode }}">
+      <button class="btn {{ 'btn-outline' if mode == 'trusted' else 'btn-quiet' }}" type="submit">{{ label }}</button>
+    </form>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <p class="muted small" style="margin-top:0.75rem;">
+    Barcode corrections:
+    {% if account.barcode_trust == "blocked" %}<strong>blocked</strong>
+    (submissions refused, and existing votes count for nothing).
+    {% elif account.barcode_trust == "trusted" %}<strong>trusted</strong>
+    (a vote of 3, enough to publish a barcode on its own).
+    {% else %}normal: the vote's weight follows account age, a confirmed
+    address, and how often past votes matched what was published.{% endif %}
+  </p>
 </div>
 
 <div class="card">

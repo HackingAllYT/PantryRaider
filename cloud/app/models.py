@@ -75,6 +75,12 @@ class Account(Base):
     # free trial starts on verification, not on signup, so an address nobody
     # can read never mints one. Cleared once the trial is decided.
     pending_trial_key: Mapped[str] = mapped_column(String(64), default="")
+    # Standing for community barcode corrections (barcode_trust.py): "" for
+    # normal (the vote weight is earned from account age, a confirmed address
+    # and past agreement), "trusted" for a contributor an admin vouches for
+    # (a heavy vote that can publish alone), or "blocked" after abuse (the
+    # submission route refuses the account and its votes weigh nothing).
+    barcode_trust: Mapped[str] = mapped_column(String(10), default="")
     created_at: Mapped[str] = mapped_column(String(40))
 
 
@@ -751,3 +757,68 @@ class ExpiryObservation(Base):
     # existed, and rows from before FoodAssistant-4lgfn carry an older
     # day-scoped tag; the feed ignores both (learn.is_current_tag).
     submitter: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+
+class BarcodeCorrection(Base):
+    """One account's vote on what a barcode is, from an opted-in kitchen.
+
+    A kitchen that shares barcode corrections sends the name (and brand and
+    category) its owner settled on after the lookup got it wrong or found
+    nothing. Unlike shelf-life points these carry free text, so every row is
+    tied to an account: votes are weighed by that account's trust, an abusive
+    account can be blocked, and its rows go when the account is deleted.
+
+    The unique pair (barcode, account_id) is the one-vote rule: a later
+    correction from the same account, from any of its kitchens, replaces the
+    earlier one instead of stacking a second vote. name_key is the grouping
+    key (barcode_trust.name_key), so spellings that differ only in case,
+    punctuation or a leading brand count as the same answer. was_name and
+    was_brand record what the lookup said, as context for a reviewer.
+    status is "active", or "rejected" once an admin rejects the barcode; a
+    rejected vote never counts toward consensus and costs its account trust.
+    """
+
+    __tablename__ = "barcode_corrections"
+    __table_args__ = (
+        UniqueConstraint("barcode", "account_id",
+                         name="uq_barcode_corrections_account"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    barcode: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    name_key: Mapped[str] = mapped_column(String(120))
+    brand: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    was_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    was_brand: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    # A bare integer: the vote belongs to the account, and removing a kitchen
+    # does not withdraw what its owner already said.
+    instance_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="active")
+    created_at: Mapped[str] = mapped_column(String(40))
+    updated_at: Mapped[str] = mapped_column(String(40), default="")
+
+
+class BarcodeDecision(Base):
+    """An admin's ruling on a barcode, which wins over the vote.
+
+    "approved" publishes the stored name, brand and category whatever the
+    votes say (and votes that disagree count against their accounts);
+    "rejected" keeps the barcode out of the feed. Clearing the decision
+    deletes the row and hands the barcode back to the vote.
+    """
+
+    __tablename__ = "barcode_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    barcode: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    action: Mapped[str] = mapped_column(String(10))
+    name: Mapped[str] = mapped_column(String(120), default="")
+    brand: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # A bare integer, like admin_actions: the ruling outlives the admin.
+    admin_account_id: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str] = mapped_column(String(255), default="")
+    decided_at: Mapped[str] = mapped_column(String(40))

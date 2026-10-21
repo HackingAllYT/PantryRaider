@@ -266,6 +266,13 @@ class CloudSettings(BaseSettings):
     # overrides feed: the k-threshold that keeps a lone submission from ever
     # being individually visible (see routers/learn.py aggregate).
     learn_k_threshold: int = 5
+    # Community barcode corrections (POST /v1/barcodes/corrections). These
+    # come from linked kitchens, so the limits are per account: requests per
+    # minute, and how many barcodes one account may correct in a UTC day (an
+    # app sends a handful a week; the cap only stops a runaway or a spammer
+    # from filling the table).
+    barcode_rate_per_minute: int = 6
+    barcode_corrections_per_day: int = 200
     # Whether a newly shared recipe must be approved by a moderator before the
     # community can see it. Off by default: at launch the shared library is
     # small and the friendlier experience is that a recipe appears the moment

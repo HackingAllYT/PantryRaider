@@ -51,17 +51,18 @@ def prettify_date(value: str) -> str:
 
 # Where a best-by date came from. Kept as a small set of strings (not free text)
 # so the badge copy below always maps cleanly.
-DateSource = Literal["manual", "default", "llm", "community"]
+DateSource = Literal["manual", "default", "llm", "community", "history"]
 
 # Short, user-facing badge copy for each source. Deliberately plain: "est." for
-# a rule-of-thumb estimate (a built-in rule or community shelf-life data, both
-# estimates), "AI" for an AI guess, and nothing for a date the user set
+# a rule-of-thumb estimate (a built-in rule, community shelf-life data, or
+# this kitchen's own spoilage history, all estimates), "AI" for an AI guess, and nothing for a date the user set
 # themselves (a typed date needs no caveat). No developer jargon.
 _SOURCE_BADGE: dict[str, str] = {
     "manual": "",
     "default": "est.",
     "llm": "AI",
     "community": "est.",
+    "history": "est.",
 }
 
 DEFAULT_DPI = 203

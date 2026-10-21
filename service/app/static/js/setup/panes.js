@@ -131,6 +131,22 @@ function savePaneCommunityShelfLife(btn) {
   }, btn, 'community-shelflife-save-result');
 }
 
+// Community barcode fixes (Inventory pane, FoodAssistant-mypf0).
+function savePaneCommunityBarcodes(btn) {
+  return savePane({
+    use_community_barcodes:    chk('use_community_barcodes'),
+    share_barcode_corrections: chk('share_barcode_corrections'),
+  }, btn, 'community-barcodes-save-result');
+}
+
+// Kitchen history (Inventory pane, FoodAssistant-i9flm): its one toggle has
+// its own save so it never re-posts the community or Grocy fields.
+function savePaneKitchenHistory(btn) {
+  return savePane({
+    use_kitchen_history: chk('use_kitchen_history'),
+  }, btn, 'kitchen-history-save-result');
+}
+
 // Device hostname (link building) lives in the Devices pane; it has its own
 // save so the card posts only its own field.
 function saveDeviceHostname(btn) {

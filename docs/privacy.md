@@ -148,6 +148,20 @@ Two separate switches, documented in full on
   values so they can never make a fridge or counter date much longer than its
   own rules, and never longer at all for meat, fish, eggs or dairy.
 
+### Community barcode fixes
+
+Two separate switches, documented in full on
+[Community barcode fixes](community-barcodes.md):
+
+- **Using** the list of fixed product names (on by default) fetches a small
+  file from Forager once a day. The request is anonymous and sends nothing
+  about you or your pantry.
+- **Sending** your own fixes is opt-in, off by default, and needs a linked
+  Forager account. Each fix holds the barcode, the name, brand and category
+  you chose, and what the lookup had said. It is stored with your account so
+  bad fixes can be traced and blocked, but your account is never published
+  with it.
+
 ### Update checks
 
 The app checks GitHub for a newer version so it can show the update notice:
@@ -411,6 +425,8 @@ so no single kitchen's data is ever visible.
   new one arrives.
 - Anonymous shelf-life observations: kept to build the aggregated table;
   they contain nothing that can identify you.
+- Barcode fixes: kept with your account while it exists, and deleted with
+  it. A fix you send again for the same barcode replaces your earlier one.
 - Account records: kept while the account exists, removed when you delete
   the account (see deleting your account above).
 - Billing records: Stripe keeps payment and invoice records for as long as

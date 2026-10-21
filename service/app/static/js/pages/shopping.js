@@ -195,6 +195,38 @@ async function loadSuggestions() {
   } catch (_) {}
 }
 
+// Running low: in-stock items that, at the rate this kitchen uses them, run
+// out within a week.
+function runoutText(days) {
+  if (days <= 0) return 'about to run out';
+  if (days === 1) return 'about 1 day left';
+  return 'about ' + days + ' days left';
+}
+
+async function loadRunout() {
+  const card = document.getElementById('runout-card');
+  const el = document.getElementById('runout');
+  if (!card || !el) return;
+  try {
+    const r = await fetch('grocy/runout');
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.items || !data.items.length) return;
+    card.classList.remove('d-none');
+    el.innerHTML = data.items.map(s => `
+      <div class="list-group-item d-flex align-items-center justify-content-between">
+        <span class="small">${PR.esc(s.product_name)}
+          <span class="text-secondary ms-1">(${runoutText(s.days_left)})</span>
+        </span>
+        <button class="btn btn-sm btn-outline-primary btn-icon"
+                data-on-click="addSuggestion(${PR.escAttrJs(s.product_name)})"
+                title="Add to list">
+          <i class="bi bi-plus-lg"></i>
+        </button>
+      </div>`).join('');
+  } catch (_) {}
+}
+
 async function addSuggestion(name) {
   try {
     const r = await fetch('mealie/shopping/items', {
@@ -209,7 +241,7 @@ async function addSuggestion(name) {
   load(currentListId);
 }
 
-if (SHOPPING_BACKEND === 'grocy') loadSuggestions();
+if (SHOPPING_BACKEND === 'grocy') { loadSuggestions(); loadRunout(); }
 
 // Needs an AI provider.
 // Receipt price capture: photo -> /receipt/analyze acks instantly and reads

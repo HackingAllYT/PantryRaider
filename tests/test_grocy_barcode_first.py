@@ -70,6 +70,8 @@ def grocy(monkeypatch):
             return CONVERSIONS
         return []
 
+    state["fake_get"] = fake_get
+
     async def fake_add_stock(self, product_id, item, location_id=None):
         state["adds"].append((product_id, item.quantity))
         state.setdefault("locations", []).append(location_id)
@@ -150,12 +152,11 @@ def test_stock_amount_converts_known_units_only(grocy):
 
 def test_add_to_product_stocks_converted_amount(grocy):
     item = FoodItem(name="Pure Leaf Unsweetened Tea", quantity=1, unit="Pack")
-    result = asyncio.run(GrocyClient().add_to_product(5, item))
+    result = asyncio.run(GrocyClient().add_to_product(5, item, 3))
     assert result["product_id"] == 5
     assert grocy["adds"] == [(5, 18)]
-    # Kept in the product's own storage area: Grocy files it under the
-    # product's default location.
-    assert grocy["locations"] == [None]
+    # Kept in the product's own location.
+    assert grocy["locations"] == [3]
 
 
 def test_add_to_product_follows_a_storage_area_changed_on_review(grocy, monkeypatch):
@@ -169,7 +170,7 @@ def test_add_to_product_follows_a_storage_area_changed_on_review(grocy, monkeypa
     item = FoodItem(name="Pure Leaf Unsweetened Tea", quantity=1, unit="Bottle",
                     storage_type="frozen")
     asyncio.run(GrocyClient().add_to_product(5, item))
-    assert len(made) == 1
+    assert made == ["Freezer"]
     assert grocy["locations"] == [9]
 
 
@@ -251,6 +252,7 @@ def test_case_scan_fills_row_from_grocy_not_off(client, grocy, off_calls):
     assert (row["quantity"], row["unit"]) == (1, "Pack")
     assert row["category"] == "Beverages"
     assert row["storage_type"] == "refrigerated"
+    assert row["grocy_location"] == "Refrigerator"
     assert row["best_by_source"] == "default"
     assert row["lookup_failed"] is False and row["enriching"] is False
 
@@ -258,7 +260,63 @@ def test_case_scan_fills_row_from_grocy_not_off(client, grocy, off_calls):
     assert r["imported"] == 1
     # One case = 18 bottles, on the existing product; nothing made by name.
     assert grocy["adds"] == [(5, 18)]
+    assert grocy["locations"] == [3]
     assert grocy["imports"] == []
+
+
+def test_product_keeps_its_own_location_on_commit(client, grocy, off_calls, monkeypatch):
+    # The follow-up on issue #65: a product kept in "Basement Fridge", a
+    # location set up as its own storage area, landed in the generic
+    # Refrigerator instead.
+    from app.config import settings
+    monkeypatch.setitem(PRODUCT, "location_id", 8)
+    monkeypatch.setattr(settings, "custom_storage_categories",
+                        [{"label": "Basement Fridge"}], raising=False)
+    made = []
+
+    async def fake_get_locations(self, path):
+        if path == "/objects/locations":
+            return [{"id": 3, "name": "Refrigerator"},
+                    {"id": 8, "name": "Basement Fridge"}]
+        return await grocy["fake_get"](self, path)
+
+    async def fake_ensure_location(self, name):
+        made.append(name)
+        return 3
+    monkeypatch.setattr(GrocyClient, "_get", fake_get_locations)
+    monkeypatch.setattr(GrocyClient, "ensure_location", fake_ensure_location)
+
+    _clear(BOTTLE)
+    item_id = _scan(client, BOTTLE)
+    _enrich(item_id, BOTTLE)
+    assert _row(client, item_id)["grocy_location"] == "Basement Fridge"
+    client.post("/pending/commit", json={"ids": [item_id]})
+    assert grocy["locations"] == [8]
+    assert made == []
+
+
+def test_storage_picked_on_review_replaces_product_location(client, grocy, off_calls,
+                                                            monkeypatch):
+    made = []
+
+    async def fake_ensure_location(self, name):
+        made.append(name)
+        return 3
+    monkeypatch.setattr(GrocyClient, "ensure_location", fake_ensure_location)
+    _clear(BOTTLE)
+    item_id = _scan(client, BOTTLE)
+    _enrich(item_id, BOTTLE)
+    # Picking the product's own location again changes nothing.
+    row = client.patch(f"/pending/{item_id}", json={"storage_type": "grocy"}).json()
+    assert row["grocy_location"] == "Refrigerator"
+    assert row["storage_type"] == "refrigerated"
+    # Any storage area wins over it, even the one it sorts into.
+    row = client.patch(f"/pending/{item_id}",
+                       json={"storage_type": "refrigerated"}).json()
+    assert row["grocy_location"] is None
+    client.post("/pending/commit", json={"ids": [item_id]})
+    assert made == ["Refrigerator"]
+    assert grocy["locations"] == [3]
 
 
 def test_amount_barcode_counts_every_scan(client, grocy, off_calls):

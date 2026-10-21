@@ -73,6 +73,7 @@
  "GET /gadgets/product-search": "kitchen",
  "GET /gadgets/state": "kitchen",
  "GET /grocy/stock-log": "kitchen",
+ "GET /grocy/runout": "kitchen",
  "GET /grocy/suggestions": "kitchen",
  "GET /ha/state": "ha",
  "GET /health": "public",

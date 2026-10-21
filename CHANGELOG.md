@@ -10,6 +10,22 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.119] - 2026-10-21
+
+### Added
+- **Fix a product's name once and help every kitchen.** When a scan comes up with the wrong name, brand, or category, the fix you make on the Pending page can now be shared with other Pantry Raider kitchens. It is off unless you turn on Send barcode fixes in Settings, Inventory, and it needs a linked Forager account. A fix is only passed on after several trusted kitchens agree on it, and fixes to products you set up yourself in Grocy are never sent.
+- **Scans use names other kitchens have fixed.** Before asking Open Food Facts, the app now checks the list of barcode fixes the community agreed on, and each release ships with the latest copy so it also helps offline. Turn it off with Use community barcode fixes in Settings, Inventory. See [Community barcode fixes](docs/community-barcodes.md).
+- **Best-by dates learn from what you throw out.** When you mark the same product as spoiled at least three times, new items of that product get a best-by date that matches how long it really lasts in your kitchen. If your strawberries usually go bad after three days, the next box is dated three days out instead of a week. Learned dates only ever get shorter, never longer, they never apply to the freezer, and your own expiry rules always win. Printed labels mark these dates "est." like other estimates. The first few times it shortens a date, a note on the Pending page says which product and why, with a Turn off button right there. You can also turn it off any time under Settings, Inventory & Storage, Learn from your kitchen. Nothing leaves your device.
+- **Running low soon, on the Shopping page.** Next to the restock suggestions, a new list shows items you still have but will probably use up within a week, based on how fast you have used them over the last two months. Tap the plus to put one on your list before it runs out.
+- **Recipes recognize the other name for an ingredient.** A recipe that calls for scallions now finds the green onions in your stock, and the same goes for garbanzo beans and chickpeas, courgette and zucchini, double cream and heavy cream, fresh coriander and cilantro, minced beef and ground beef, and about thirty other US and UK pairs. Cook suggestions and "add missing to shopping list" both use them, so you are no longer told to buy something you already have under another name.
+
+### Changed
+- **Recipes are pickier about what counts as already in your pantry.** One shared word used to be enough, so a recipe asking for baking powder counted your baking soda, chicken stock counted your chicken breasts, and milk counted your coconut milk. Now the ingredient and the item in stock have to be the same food. Variety words still match ("yellow onion" finds your onions, "unsalted butter" finds your butter, "cheddar cheese" finds your cheddar), "butter or margarine" is happy with either, and prep notes after a comma ("softened", "cut into pieces") are ignored. Cook suggestions and "add missing to shopping list" are more accurate as a result, and a few recipes that used to look ready will now show what you really need to buy.
+
+### Fixed
+- **Scanned products you set up in Grocy go to their own location.** When a barcode you had already registered in Grocy came up on the Pending page, the item was put away in the general area its location sounded like, so a product kept in a Basement Fridge ended up in the Refrigerator. The Storage menu now shows the product's own Grocy location and puts the stock there. Pick another area from the menu to put it somewhere else. Thanks to @vanwormer815 for the report.
+- **Cleaner update logs on a Raspberry Pi.** When an update took longer than the screen that started it was willing to wait, the device's helper wrote two error reports to its log even though the update had finished fine. It now notes nothing in that case, so the support bundle only shows real problems.
+
 ## [0.21.112] - 2026-10-19
 
 ### Added

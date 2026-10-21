@@ -67,6 +67,24 @@
           </button>
           <div class="test-result mt-2 mb-3" id="grocy-save-result"></div>
 
+          {# Kitchen history (FoodAssistant-i9flm): learn spoilage and
+             consumption from this install's own Grocy journal. Main installs
+             only, for the same reason as community shelf life below. #}
+          {% if not features.satellite %}
+          {% call panel('Learn from your kitchen',
+                        'Better best-by dates and run-out warnings from what you have already used and thrown out.') %}
+            {% call srow('Learn from your history', 'Stays on this device.',
+                         'When you mark the same product as spoiled several times, new items of that product get a best-by date that matches how long it really lasts in your kitchen. Dates only ever get shorter this way, never longer, and your own expiry rules always win. The Shopping page also lists items you are likely to run out of within a week, based on how fast you use them. Nothing is sent anywhere.') %}
+              {{ toggle('use_kitchen_history', checked=s.use_kitchen_history, label='Learn from my kitchen history') }}
+            {% endcall %}
+          {% endcall %}
+
+          <button type="button" class="btn btn-outline-info btn-sm" data-on-click="savePaneKitchenHistory(this)">
+            <i class="bi bi-check-lg me-1"></i>Save kitchen history
+          </button>
+          <div class="test-result mt-2 mb-3" id="kitchen-history-save-result"></div>
+          {% endif %}
+
           {# Community shelf life (FoodAssistant-ezkh): better best-by estimates
              from real kitchens, plus the anonymous opt-in to contribute your
              own corrections back. Main installs only: a satellite forwards
@@ -93,6 +111,31 @@
             <i class="bi bi-check-lg me-1"></i>Save community shelf life
           </button>
           <div class="test-result mt-2 mb-3" id="community-shelflife-save-result"></div>
+
+          {# Community barcode fixes (FoodAssistant-mypf0): product names from
+             other kitchens' fixes, and the opt-in to send yours. Main installs
+             only, for the same reason as community shelf life above. #}
+          {% call panel('Community barcode fixes',
+                        'Product names other kitchens have fixed, and an optional way to send your own fixes.') %}
+            {% call srow('Use community fixes', 'Better names for scanned products.',
+                         'When you scan a barcode, the app checks a list of product names other Pantry Raider kitchens have corrected before it asks Open Food Facts. A fix only makes the list after several trusted kitchens agree on it, and each release ships with the latest copy. This only downloads; it sends nothing about you or your pantry.') %}
+              {{ toggle('use_community_barcodes', checked=s.use_community_barcodes, label='Use community barcode fixes') }}
+            {% endcall %}
+            {% call srow('Send your fixes', 'Needs a linked Forager account. Off unless you turn it on.',
+                         'When a scanned item comes up with the wrong name, brand, or category and you fix it on the Pending page before adding it, send that fix so the next kitchen gets it right. Each fix contains the barcode, the name, brand, and category you chose, and what the lookup had said. It is linked to your Forager account so bad fixes can be traced and blocked, but it is never shown with your name, and nothing else about your pantry is sent. Fixes to products you set up yourself in Grocy are never sent.') %}
+              {{ toggle('share_barcode_corrections', checked=s.share_barcode_corrections, label='Send barcode fixes', disabled=not s.cloud_linked()) }}
+              {% if not s.cloud_linked() %}
+              <div class="form-text">Link this kitchen to a Forager account on the Forager page to turn this on.</div>
+              {% endif %}
+            {% endcall %}
+            <p class="text-secondary small mt-2 mb-0">How fixes are checked before anyone gets them:
+              <a href="https://docs.pantryraider.app/community-barcodes/" target="_blank" rel="noopener">Community barcode fixes</a>.</p>
+          {% endcall %}
+
+          <button type="button" class="btn btn-outline-info btn-sm" data-on-click="savePaneCommunityBarcodes(this)">
+            <i class="bi bi-check-lg me-1"></i>Save barcode fixes
+          </button>
+          <div class="test-result mt-2 mb-3" id="community-barcodes-save-result"></div>
           {% endif %}
 
           {# Custom Storage Categories share the pane with the Grocy backend:

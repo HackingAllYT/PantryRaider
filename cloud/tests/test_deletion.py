@@ -6,8 +6,8 @@ from app import stripe_api
 from app.config import settings
 from app.database import SessionLocal
 from app.deps import utc_now_iso
-from app.models import (Account, AdminAction, AuthSession, CloudBackup,
-                        CommunityRecipe, EmailToken, Entitlement, Instance,
+from app.models import (Account, AdminAction, AuthSession, BarcodeCorrection,
+                        CloudBackup, CommunityRecipe, EmailToken, Entitlement, Instance,
                         PairingCode, RecipeRating, RecipeReport, RecoveryCode,
                         SharedRecipe, SharedRecipeReport, Subscription,
                         TotpChallenge, TrialClaim, UsageLedger,
@@ -69,6 +69,13 @@ def _populate(backup_dir, email="dan@example.com"):
                             status="active", updated_at=now))
         db.add(TrialClaim(install_key="install-1", account_id=aid,
                           created_at=now))
+        # A barcode vote of theirs (to be removed) and one of the other
+        # member's on the same barcode (to stay).
+        for voter in (aid, other.id):
+            db.add(BarcodeCorrection(barcode="0123456789012", name="Ketchup",
+                                     name_key="ketchup", account_id=voter,
+                                     status="active", created_at=now,
+                                     updated_at=now))
 
         # A backup row with a real file on disk.
         acct_dir = backup_dir / str(aid)
@@ -148,7 +155,7 @@ def test_full_cascade_removes_everything_and_keeps_what_must_stay(
         for model in (AuthSession, EmailToken, RecoveryCode, TotpChallenge,
                       WebAuthnCredential, WebAuthnChallenge, PairingCode,
                       Instance, UsageLedger, Subscription, Entitlement,
-                      CloudBackup):
+                      CloudBackup, BarcodeCorrection):
             assert db.query(model).filter_by(account_id=aid).count() == 0, model
         assert db.query(RecipeRating).filter_by(account_id=aid).count() == 0
         assert db.query(RecipeReport).filter_by(account_id=aid).count() == 0
@@ -184,8 +191,10 @@ def test_full_cascade_removes_everything_and_keeps_what_must_stay(
         assert audit is not None and audit.account_id == aid
         assert "@" not in (audit.admin_email + audit.detail)
 
-        # The bystander account is untouched.
+        # The bystander account is untouched, its barcode vote included.
         assert db.get(Account, other_id) is not None
+        assert (db.query(BarcodeCorrection).filter_by(account_id=other_id)
+                .count() == 1)
     finally:
         db.close()
 

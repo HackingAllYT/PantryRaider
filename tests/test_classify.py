@@ -127,3 +127,36 @@ def test_top_per_tier_caps_results():
     recipes = [recipe(f"R{i}", ["chicken"]) for i in range(10)]
     tiers = classify_recipes(recipes, [stock("Chicken")], top_per_tier=3)
     assert len(tiers["ready"]) == 3
+
+
+# ── Food synonyms (FoodAssistant-vq81e) ─────────────────────────────────────
+
+@pytest.mark.parametrize("wanted,have", [
+    ("3 scallions, sliced", "Green Onions"),
+    ("1 cup garbanzo beans", "Chickpeas"),
+    ("2 courgettes", "Zucchini"),
+    ("200 ml double cream", "Heavy Cream"),
+    ("1/2 bunch fresh coriander", "Cilantro"),
+    ("500 g minced beef", "Ground Beef"),
+])
+def test_synonyms_count_as_in_stock(wanted, have):
+    tiers = classify_recipes([recipe("Dish", [wanted])], [stock(have)])
+    assert [r["name"] for r in tiers["ready"]] == ["Dish"]
+
+
+@pytest.mark.parametrize("wanted,have", [
+    ("margarine", "Butter"),
+    ("lime", "Lemons"),
+    ("ground coriander", "Cilantro"),
+    ("turkey", "Chicken"),
+])
+def test_related_foods_are_not_synonyms(wanted, have):
+    tiers = classify_recipes([recipe("Dish", [wanted])], [stock(have)])
+    assert not tiers["ready"]
+
+
+def test_synonyms_reach_the_shopping_list_split():
+    from app.services.recipe_match import partition_recipe_ingredients
+    out = partition_recipe_ingredients(
+        [{"note": "aubergine"}, {"note": "rocket"}], [{"name": "Eggplant"}])
+    assert out == {"owned": ["aubergine"], "needed": ["rocket"]}

@@ -83,6 +83,79 @@ def _tokens(text: str) -> set[str]:
     return {w.rstrip("s") for w in words if len(w) >= 3 and w not in _STOP_WORDS}
 
 
+# One food, several names: US and UK English plus a few other common pairs.
+# The token matcher only sees shared words, so without these "scallions" never
+# finds the green onions in stock. Every phrase in a group gives a name the
+# group's marker token, which only another name for the same food carries.
+# Only true synonyms belong here. Related foods (butter and margarine, baking
+# soda and baking powder, chicken and turkey) stay apart; a small embedding
+# model was tried for this and could not tell the two kinds of pair apart
+# (FoodAssistant-vq81e). "Coriander" alone is left out because in a US recipe
+# it means the seed spice.
+_SYNONYM_GROUPS = (
+    ("scallion", "green onion", "spring onion"),
+    ("cilantro", "fresh coriander", "coriander leaf", "coriander leave"),
+    ("chickpea", "garbanzo bean", "garbanzo", "chick pea"),
+    ("tahini", "tahini paste", "tahina", "sesame paste"),
+    ("zucchini", "courgette"),
+    ("eggplant", "aubergine", "brinjal"),
+    ("bell pepper", "capsicum", "sweet pepper"),
+    ("ground beef", "minced beef", "beef mince", "hamburger meat"),
+    ("ground pork", "minced pork", "pork mince"),
+    ("ground turkey", "minced turkey", "turkey mince"),
+    ("ground lamb", "minced lamb", "lamb mince"),
+    ("heavy cream", "double cream", "whipping cream", "heavy whipping cream"),
+    ("powdered sugar", "confectioner sugar", "icing sugar"),
+    ("superfine sugar", "caster sugar", "castor sugar"),
+    ("arugula", "rocket"),
+    ("shrimp", "prawn"),
+    ("cornstarch", "corn starch", "cornflour"),
+    ("baking soda", "bicarbonate of soda", "bicarb soda", "sodium bicarbonate"),
+    ("all purpose flour", "plain flour", "ap flour"),
+    ("self rising flour", "self raising flour"),
+    ("snow pea", "mangetout", "mange tout"),
+    ("rutabaga", "swede"),
+    ("red pepper flake", "chili flake", "chilli flake", "crushed red pepper"),
+    ("golden raisin", "sultana"),
+    ("beet", "beetroot"),
+    ("fava bean", "broad bean"),
+    ("lima bean", "butter bean"),
+    ("navy bean", "haricot bean"),
+    ("green bean", "string bean", "french bean"),
+    ("canola oil", "rapeseed oil"),
+    ("skim milk", "skimmed milk"),
+    ("bok choy", "pak choi", "bok choi"),
+    ("daikon", "mooli"),
+)
+
+
+def _phrase_words(text: str) -> tuple[str, ...]:
+    return tuple(w.rstrip("s") for w in re.findall(r"[a-z]+", (text or "").lower()))
+
+
+_SYNONYM_INDEX = tuple(sorted(
+    ((_phrase_words(phrase), f"~{group[0].replace(' ', '_')}")
+     for group in _SYNONYM_GROUPS for phrase in group),
+    key=lambda pm: -len(pm[0])))  # longest phrase wins at each position
+
+
+def _with_synonyms(words: tuple[str, ...]) -> list[str]:
+    """``words`` with every synonym phrase replaced by its group marker, so
+    "green onion" and "scallion" both become one "~scallion" word."""
+    out, i = [], 0
+    while i < len(words):
+        for phrase, marker in _SYNONYM_INDEX:
+            n = len(phrase)
+            if words[i:i + n] == phrase:
+                out.append(marker)
+                i += n
+                break
+        else:
+            out.append(words[i])
+            i += 1
+    return out
+
+
 def _ingredient_text(ing: dict) -> str:
     food = ing.get("food") or {}
     return food.get("name") or ing.get("display") or ing.get("note") or ""
@@ -131,6 +204,110 @@ _MEASURE_TOKENS = {
     "container", "containers", "slice", "slices", "piece", "pieces",
     "sprig", "sprigs", "stalk", "stalks", "bunch", "bunches", "knob",
 }
+
+
+# ── Same-food test (stricter matching) ───────────────────────────────────────
+#
+# One shared word used to be enough to count an ingredient as owned, so
+# "baking powder" found the baking soda and "chicken" found the chicken stock.
+# Now the two names must share their head word (the last real word: "stock"
+# in "chicken stock"), the recipe may only add harmless variety words
+# ("yellow onion" is still an onion), and the stock name may not add a word
+# that changes what the food is ("coconut milk" is not milk).
+
+# Preparation, size and measurement words that say nothing about the food.
+_PREP_WORDS = {w.rstrip("s") for w in _MEASURE_TOKENS} | {
+    "fresh", "freshly", "frozen", "chopped", "diced", "sliced", "minced",
+    "grated", "shredded", "fine", "finely", "coarse", "coarsely", "large",
+    "small", "medium", "jumbo", "whole", "raw", "ripe", "peeled", "seeded",
+    "deseeded", "trimmed", "rinsed", "drained", "softened", "melted", "cold",
+    "warm", "room", "temperature", "divided", "plus", "more", "about",
+    "optional", "taste", "cut", "into", "inch", "cube", "cubed", "thinly",
+    "thick", "thin", "roughly", "halved", "quartered", "boneless", "skinless",
+    "organic", "canned", "extra", "virgin", "good", "quality", "packed",
+    "lightly", "beaten", "cooked", "uncooked", "leftover", "sifted",
+    "heaping", "level", "serving", "garnish", "needed", "each",
+    "approximately", "few", "some", "store", "bought", "homemade", "mashed",
+    "pitted", "toasted", "roasted", "dried", "baby", "unsalted", "salted",
+    "low", "sodium", "fat", "free", "reduced", "kosher", "pure", "natural",
+    "head", "sprig", "stalk", "bunch", "clove",
+}
+
+# Words a recipe adds to name a variety of the same food. Only these may
+# appear in the ingredient without appearing in the stock name.
+_VARIETY_WORDS = {
+    "yellow", "white", "red", "green", "purple", "black", "brown", "golden",
+    "russet", "yukon", "gold", "roma", "vine", "heirloom", "granny", "smith",
+    "gala", "honeycrisp", "english", "persian", "hothouse", "italian", "flat",
+    "leaf", "curly", "greek", "regular", "long", "grain", "jasmine",
+    "basmati", "arborio", "vidalia", "spanish", "light", "dark", "plain",
+}
+
+# Words that turn one food into a different one when they sit in front of
+# it: coconut milk, peanut butter, sour cream, corn syrup. Never ignored on
+# either side.
+_IDENTITY_WORDS = {
+    "coconut", "almond", "oat", "soy", "soya", "rice", "cashew", "peanut",
+    "sesame", "hazelnut", "goat", "sour", "condensed", "evaporated",
+    "chocolate", "corn", "maple", "garlic", "onion", "apple", "cream",
+    "buttermilk", "powdered",
+}
+
+# Cuts and class nouns that may trail the real food word: chicken breast is
+# chicken, cheddar cheese is cheddar.
+_TRAILING_WORDS = {
+    "breast", "thigh", "drumstick", "wing", "leg", "tender", "tenderloin",
+    "fillet", "filet", "loin", "chop", "cutlet", "cheese", "leaf", "leave",
+}
+
+# Names are compared after plurals lose their trailing "s" ("boneless"
+# becomes "bonele"), so the word lists are folded the same way.
+_PREP_WORDS = {w.rstrip("s") for w in _PREP_WORDS}
+_VARIETY_WORDS = {w.rstrip("s") for w in _VARIETY_WORDS}
+_IDENTITY_WORDS = {w.rstrip("s") for w in _IDENTITY_WORDS}
+_TRAILING_WORDS = {w.rstrip("s") for w in _TRAILING_WORDS}
+
+_JUICE_OF = re.compile(r"\b(?:juice|zest)\s+of\b")
+_PARENS = re.compile(r"\([^)]*\)")
+
+
+def _food_key(text: str) -> tuple[frozenset, str] | None:
+    """(food words, head word) for one name, or None when nothing is left."""
+    text = _PARENS.sub(" ", _JUICE_OF.sub(" ", (text or "").lower()))
+    main = text.split(",")[0]
+    for candidate in (main, text):
+        words = [w for w in _with_synonyms(_phrase_words(candidate))
+                 if w.startswith("~") or (len(w) >= 3 and w not in _STOP_WORDS
+                                          and w not in _PREP_WORDS)]
+        while len(words) > 1 and words[-1] in _TRAILING_WORDS:
+            words.pop()
+        if words:
+            return frozenset(words), words[-1]
+    return None
+
+
+def _same_food(ing_key, stock_key) -> bool:
+    """True when an ingredient and a stock item name the same food."""
+    if not ing_key or not stock_key:
+        return False
+    ing, ing_head = ing_key
+    stock, stock_head = stock_key
+    if ing_head != stock_head:
+        return False
+    if (ing - stock) - _VARIETY_WORDS:
+        return False
+    return not ((stock - ing) & _IDENTITY_WORDS) and not ((ing - stock) & _IDENTITY_WORDS)
+
+
+def _ingredient_keys(text: str) -> list:
+    """One food key per alternative: "butter or margarine" offers both."""
+    parts = re.split(r"\bor\b|/", text or "")
+    keys = [k for k in (_food_key(p) for p in parts) if k]
+    return keys or [k for k in [_food_key(text)] if k]
+
+
+def _owns(ing_keys: list, stock_key) -> bool:
+    return any(_same_food(k, stock_key) for k in ing_keys)
 
 
 def _load_staples_file() -> list[frozenset[str]] | None:
@@ -338,9 +515,9 @@ def partition_recipe_ingredients(ingredients: list[dict], stock: list[dict],
     """
     inv = []
     for s in stock or []:
-        toks = _tokens(s["name"])
-        if toks:
-            inv.append((toks, s))
+        key = _food_key(s["name"])
+        if key:
+            inv.append((key, s))
     owned: list[str] = []
     needed: list[str] = []
     for ing in ingredients or []:
@@ -348,10 +525,11 @@ def partition_recipe_ingredients(ingredients: list[dict], stock: list[dict],
         ing_toks = _tokens(text)
         if not text or not ing_toks or ing_toks <= _FREEBIE_TOKENS:
             continue
+        ing_keys = _ingredient_keys(text)
         in_stock = any(
-            ing_toks & inv_toks
+            _owns(ing_keys, inv_key)
             and _stock_covers_amount(ing, item, units, conversions) is not False
-            for inv_toks, item in inv)
+            for inv_key, item in inv)
         if in_stock or _is_staple_ingredient(ing_toks):
             owned.append(text)
         else:
@@ -391,7 +569,7 @@ def classify_recipes(recipes: list[dict], stock: list[dict],
     for s in stock:
         toks = _tokens(s["name"])
         if toks:
-            inv.append({"name": s["name"], "tokens": toks,
+            inv.append({"name": s["name"], "key": _food_key(s["name"]),
                         "days_remaining": s.get("days_remaining"),
                         "perishable": _is_perishable(s),
                         "product_id": s.get("product_id"),
@@ -412,10 +590,11 @@ def classify_recipes(recipes: list[dict], stock: list[dict],
             ing_toks = _tokens(text)
             if not text or not ing_toks or ing_toks <= _FREEBIE_TOKENS:
                 continue
+            ing_keys = _ingredient_keys(text)
             hit = None
             short_hit = None
             for s in inv:
-                if not (ing_toks & s["tokens"]):
+                if not _owns(ing_keys, s["key"]):
                     continue
                 if _stock_covers_amount(ing, s, units, conversions) is False:
                     # In stock, but not enough of it once units are converted.

@@ -125,7 +125,7 @@ class PendingItem(Base):
     # review screen, stashed by the PATCH handler so the commit can compare
     # the user's choice against it (community shelf-life learning,
     # FoodAssistant-ezkh). suggested_source is NULL until the user touches
-    # the date; after that it holds "default" / "llm" / "community" / "none"
+    # the date; after that it holds "default" / "llm" / "community" / "history" / "none"
     # (none = the app had no date to offer). suggested_best_by is the
     # suggested ISO date, or NULL when there was none. Added after release:
     # database.ensure_schema() backfills both on an existing install.
@@ -147,6 +147,18 @@ class PendingItem(Base):
     # row's unit. Added after release: database.ensure_schema() backfills both.
     grocy_product_id = Column(Integer, nullable=True)
     scan_amount = Column(Float, nullable=True)
+    # That product's own Grocy location (id and name): the commit stocks it
+    # there, and the review screen offers it as the storage choice, until the
+    # user picks another storage area for the row. Backfilled the same way.
+    grocy_location_id = Column(Integer, nullable=True)
+    grocy_location = Column(String, nullable=True)
+    # What the barcode lookup filled in (FoodAssistant-mypf0), kept so the
+    # commit can tell a user's fix from the lookup's own answer and send that
+    # fix to the community when sharing is on. All NULL when the lookup found
+    # nothing. Backfilled the same way.
+    lookup_name = Column(String, nullable=True)
+    lookup_brand = Column(String, nullable=True)
+    lookup_category = Column(String, nullable=True)
     source = Column(String, default="scanner")     # scanner | ha | esp32 | manual
     created_at = Column(
         String, default=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")

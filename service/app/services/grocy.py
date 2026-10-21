@@ -1367,6 +1367,7 @@ class GrocyClient:
             "amount": amount,
             "factor": factor,
             "location": location,
+            "location_id": loc_id,
             "product_group": group,
             "default_best_before_days": _int_or_none(
                 product.get("default_best_before_days")) or 0,
@@ -1391,21 +1392,17 @@ class GrocyClient:
             product_id, unit_qu, stock_qu)
         return quantity * factor if factor else quantity
 
-    async def add_to_product(self, product_id: int, item: FoodItem) -> dict:
+    async def add_to_product(self, product_id: int, item: FoodItem,
+                             location_id: int | None = None) -> dict:
         """Stock ``item`` onto an existing product, converting its unit.
 
         Used for a scan Grocy already recognized (issue #65): the stock lands
-        on that exact product, never on a new one created by name. It goes to
-        the product's own default location while the review screen kept that
-        storage area, and to the area the user picked when they changed it."""
+        on that exact product, never on a new one created by name.
+        ``location_id`` is the product's own Grocy location, kept from the scan
+        while the review screen left it chosen. Without one the stock goes to
+        the storage area the user picked on review."""
         amount = await self.stock_amount(product_id, item.quantity, item.unit)
-        product = await self._get(f"/objects/products/{product_id}") or {}
-        default_id = _int_or_none(product.get("location_id"))
-        default_name = next((loc["name"] for loc in
-                             await self._cached_list("/objects/locations")
-                             if _int_or_none(loc.get("id")) == default_id), "")
-        location_id = None
-        if classify_location(default_name) != item.storage_type.value:
+        if location_id is None:
             location_id = await self.ensure_location(
                 _STORAGE_LABEL[item.storage_type.value])
         await self.add_stock(product_id, item.model_copy(update={"quantity": amount}),

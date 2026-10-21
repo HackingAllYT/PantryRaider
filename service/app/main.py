@@ -131,6 +131,12 @@ async def lifespan(app: FastAPI):
     # matching settings are on; every pass is best-effort.
     app.state.community_expiry_task = asyncio.create_task(
         _periodic_community_expiry())
+    # Kitchen history (FoodAssistant-i9flm): relearn spoilage and consumption
+    # from the Grocy journal every few hours. A satellite has no Grocy of its
+    # own to learn from, so it skips this.
+    if not settings.is_satellite():
+        app.state.kitchen_history_task = asyncio.create_task(
+            _periodic_kitchen_history())
     # Home Assistant thermometer source (FoodAssistant-mnks): read configured
     # HA temperature entities into the gadgets state so probes work without a
     # host Bluetooth reader. Runs on every mode; the loop sits idle until the
@@ -511,13 +517,15 @@ async def _periodic_reolink_poll():
 async def _periodic_community_expiry():
     """Community shelf life housekeeping (FoodAssistant-ezkh), hourly.
 
-    Two independent, settings-gated chores: pull the aggregated overrides feed
+    Two independent, settings-gated chores, run for shelf life and for
+    community barcode fixes alike: pull the aggregated overrides feed
     from Forager when the day-old cache is stale (use_community_expiry), and
     upload any queued anonymous expiry corrections (share_expiry_learning; the
     flush also discards the queue if sharing has been turned off, so nothing
     consented-then-withdrawn is ever sent). Both are calm about failure: an
     unreachable Forager just means the next pass tries again."""
-    from .services import community_expiry, expiry_learning
+    from .services import (barcode_corrections, community_barcodes,
+                           community_expiry, expiry_learning)
     await asyncio.sleep(90)  # settle after boot
     while True:
         try:
@@ -527,6 +535,33 @@ async def _periodic_community_expiry():
             pass
         try:
             await expiry_learning.flush()
+        except Exception:
+            pass
+        # Community barcode fixes (FoodAssistant-mypf0): the same two chores.
+        try:
+            if settings.use_community_barcodes and community_barcodes.is_stale():
+                await community_barcodes.refresh()
+        except Exception:
+            pass
+        try:
+            await barcode_corrections.flush()
+        except Exception:
+            pass
+        await asyncio.sleep(3600)
+
+
+async def _periodic_kitchen_history():
+    """Relearn this kitchen's spoilage and consumption (FoodAssistant-i9flm).
+
+    Checks hourly and rebuilds the cache when it is older than a few hours
+    and use_kitchen_history is on. A Grocy that is down just means the next
+    pass tries again; the old cache keeps serving lookups meanwhile."""
+    from .services import kitchen_history
+    await asyncio.sleep(120)  # settle after boot
+    while True:
+        try:
+            if settings.use_kitchen_history and kitchen_history.is_stale():
+                await kitchen_history.refresh()
         except Exception:
             pass
         await asyncio.sleep(3600)
@@ -942,12 +977,15 @@ _FORWARD_BAD_PATH_MSG = upstream.BAD_PATH_MSG
 async def forward_native_recipes(request: Request):
     """The main server's answer when a satellite forwards this request, else
     None. The last step of the request gate (_RequestGate below)."""
-    base = _satellite_recipe_upstream(request.url.path)
+    # The decoded path the router matched, not request.url.path: Starlette 1.9
+    # re-encodes a backslash there ('%5C'), which hid it from the guard below.
+    path = request.scope["path"]
+    base = _satellite_recipe_upstream(path)
     if not base:
         return None
-    if not _forward_path_ok(request.url.path):
+    if not _forward_path_ok(path):
         return JSONResponse({"detail": _FORWARD_BAD_PATH_MSG}, status_code=400)
-    fwd_cache = _FWD_CACHE_PATHS.get(request.url.path) if request.method == "GET" else None
+    fwd_cache = _FWD_CACHE_PATHS.get(path) if request.method == "GET" else None
     if fwd_cache is not None:
         hit = fwd_cache.get()
         if hit is not None:
@@ -959,7 +997,7 @@ async def forward_native_recipes(request: Request):
         import httpx
         _satellite_fwd_client = httpx.AsyncClient(timeout=30.0)
     params = dict(request.query_params)
-    if request.url.path == "/gadgets/outputs":
+    if path == "/gadgets/outputs":
         # The whole /gadgets family forwards, so a Bandit's key LEDs are drawn
         # by the server. Everything they show is fleet state (the mode, the
         # timers, the alarms) except one local fact: whether the Manage screen
@@ -975,7 +1013,7 @@ async def forward_native_recipes(request: Request):
         params["rest_color"] = settings.neokey_rest_color
         params["timer_color"] = settings.neokey_timer_color
     resp = await upstream.forward(
-        _satellite_fwd_client, request, _forward_url(base, request.url.path),
+        _satellite_fwd_client, request, _forward_url(base, path),
         params=params, read_get_body=True,
         unreachable_detail=upstream.UNREACHABLE_RETURN)
     if fwd_cache is not None and resp.status_code == 200:

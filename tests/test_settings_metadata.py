@@ -83,7 +83,8 @@ OLD_SAVEABLE = {
     "screensaver_all_clients", "screensaver_ken_burns",
     "screensaver_ken_burns_speed", "screensaver_minutes", "screensaver_mode",
     "screensaver_photo_seconds", "screensaver_pill_scale", "screensaver_speed",
-    "secret_key", "share_expiry_learning", "shopping_backend",
+    "secret_key", "share_barcode_corrections", "share_expiry_learning",
+    "shopping_backend",
     "spoonacular_api_key", "staple_items", "start_page_enabled",
     "start_page_keys", "start_page_layout", "start_page_mode",
     "start_page_suggestions_dismissed", "stemma_devices", "stemma_enabled",
@@ -98,7 +99,8 @@ OLD_SAVEABLE = {
     "update_last_available", "update_last_checked", "update_last_latest",
     "upstream_api_key", "upstream_credential_id", "upstream_gadget_config",
     "upstream_ha_policy_version", "usb_backup_interval_hours",
-    "usb_backup_last", "use_community_expiry", "viewer_password",
+    "usb_backup_last", "use_community_barcodes", "use_community_expiry",
+    "use_kitchen_history", "viewer_password",
     "vision_provider", "wake_on_motion", "wake_on_presence",
     "weather_api_base",
 }
@@ -292,6 +294,7 @@ OLD_SETUP_PAYLOAD = {
     'screensaver_photo_seconds': ('int | None', None),
     'screensaver_pill_scale': ('str | None', None),
     'screensaver_speed': ('str | None', None),
+    'share_barcode_corrections': ('bool', False),
     'share_expiry_learning': ('bool', False),
     'shopping_backend': ('str', ''),
     'spoonacular_api_key': ('str', ''),
@@ -326,6 +329,7 @@ OLD_SETUP_PAYLOAD = {
     'update_channel': ('str', 'stable'),
     'upstream_api_key': ('str', ''),
     'usb_backup_interval_hours': ('int', 0),
+    'use_community_barcodes': ('bool', True),
     'use_community_expiry': ('bool', True),
     'viewer_password': ('str', ''),
     'vision_provider': ('str', 'gemini'),
@@ -356,6 +360,8 @@ ADDED_TO_SETUP_PAYLOAD = {
     'tunnel_mode': ('str | None', None),
     # Request-only: the wizard's Remote Access choice (FoodAssistant-mzsci).
     'forager_remote_access': ('bool | None', None),
+    # Kitchen history learning toggle (FoodAssistant-i9flm).
+    'use_kitchen_history': ('bool', True),
 }
 # The pre-setup Forager browser marker is a session-binding value.
 ADDED_SECRETS = {"cloud_link_session"}

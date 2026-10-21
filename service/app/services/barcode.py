@@ -227,22 +227,68 @@ def _off_storage(tags: list[str], category: FoodCategory) -> StorageType:
     return StorageType.room_temp
 
 
-async def lookup_barcode(barcode: str, db: Session) -> FoodItem:
-    """Look up a barcode in Open Food Facts and return a FoodItem with defaults applied.
+def _community_fix(barcode: str) -> dict | None:
+    """The community fix for a barcode (FoodAssistant-mypf0), or None.
+    A store-local code means a different product in every store, so it is
+    never taken from the list even if one slipped in."""
+    if is_store_local_barcode(barcode):
+        return None
+    from . import community_barcodes
+    return community_barcodes.lookup(barcode)
 
-    Raises BarcodeNotFound / BarcodeServiceError.
+
+def apply_community_fix(item: FoodItem, fix: dict) -> None:
+    """Put a community fix's name, brand and category on ``item``. Pure.
+
+    The fix is what several trusted kitchens agreed the product is, so it
+    beats both the Open Food Facts entry and an AI rename."""
+    item.name = fix["name"]
+    if fix.get("brand"):
+        item.brand = fix["brand"]
+    if fix.get("category"):
+        try:
+            item.category = FoodCategory(fix["category"])
+        except ValueError:
+            pass
+    item.confidence = max(item.confidence or 0.0, 0.9)
+
+
+async def _community_item(fix: dict, db: Session) -> FoodItem:
+    item = FoodItem(name=fix["name"], quantity=1.0, unit="item", confidence=0.9)
+    apply_community_fix(item, fix)
+    return await run_in_threadpool(apply_defaults, item, db)
+
+
+async def lookup_barcode(barcode: str, db: Session) -> FoodItem:
+    """Look up a barcode and return a FoodItem with defaults applied.
+
+    Open Food Facts supplies the product, and a community fix (the names
+    other kitchens corrected, services/community_barcodes.py) replaces its
+    name, brand and category. A barcode Open Food Facts does not know, or a
+    lookup while it is unreachable, is answered from the fix alone, before
+    any AI guess. Raises BarcodeNotFound / BarcodeServiceError.
     """
+    fix = _community_fix(barcode)
     async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": OFF_UA},
                                  verify=default_context()) as client:
         try:
             r = await client.get(off_product_url(barcode))
         except httpx.HTTPError as e:
+            if fix:
+                return await _community_item(fix, db)
             raise BarcodeServiceError(f"Open Food Facts unreachable: {e}")
     try:
         data = r.json()
     except ValueError:
         data = None
-    product = parse_off_response(r.status_code, data)
+    try:
+        product = parse_off_response(r.status_code, data)
+    except BarcodeServiceError:
+        if fix:
+            return await _community_item(fix, db)
+        raise
+    if product is None and fix:
+        return await _community_item(fix, db)
     if product is None:
         # A store-assigned/random-weight code can never be resolved, by OFF or
         # by an LLM guessing from the digits alone, so this check runs before
@@ -262,6 +308,8 @@ async def lookup_barcode(barcode: str, db: Session) -> FoodItem:
         raise BarcodeNotFound(f"Barcode {barcode} not found in Open Food Facts")
 
     name = off_display_name(product)
+    if not name and fix:
+        name = fix["name"]
     if not name:
         raise BarcodeNotFound("Product found but has no name")
 
@@ -282,6 +330,8 @@ async def lookup_barcode(barcode: str, db: Session) -> FoodItem:
     )
 
     enriched = await _llm_enrich(item, product, generic, tags)
+    if fix:
+        apply_community_fix(item, fix)
 
     # OFF tags ("en:yogurts", "en:potato-chips") let branded names match
     # generic defaults rules like "yogurt" or "chips". When the LLM didn't

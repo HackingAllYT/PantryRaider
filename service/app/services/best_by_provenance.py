@@ -34,7 +34,7 @@ from .state_lock import state_write_lock
 
 # The only sources the label renderer knows how to badge (see
 # label_render.DateSource). Anything else is not worth remembering.
-_KNOWN_SOURCES = ("manual", "default", "llm", "community")
+_KNOWN_SOURCES = ("manual", "default", "llm", "community", "history")
 
 _lock = threading.Lock()
 # In-process view of the state file: {key: {"source": str, "date": str}}.

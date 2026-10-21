@@ -16,6 +16,7 @@ os.environ.setdefault("CLOUD_SIGNUP_RATE_PER_MINUTE", "0")
 os.environ.setdefault("CLOUD_LOGIN_RATE_PER_MINUTE", "0")
 os.environ.setdefault("CLOUD_PROXY_RATE_PER_MINUTE", "0")
 os.environ.setdefault("CLOUD_LEARN_RATE_PER_MINUTE", "0")
+os.environ.setdefault("CLOUD_BARCODE_RATE_PER_MINUTE", "0")
 os.environ.setdefault("CLOUD_TUNNEL_ENABLE_RATE_PER_MINUTE", "0")
 os.environ.setdefault("CLOUD_PAIRING_REDEEM_RATE_PER_MINUTE", "0")
 # No background tunnel sweep in tests; tests call the sweep function directly.

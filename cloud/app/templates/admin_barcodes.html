@@ -1,0 +1,134 @@
+{% extends "admin_base.html" %}
+{% block title %}Barcodes: Forager admin{% endblock %}
+{% block admin_content %}
+<div class="dash-head">
+  <h2 style="margin-bottom:0.25rem;">Barcode corrections</h2>
+  <a class="btn btn-outline" href="/admin">Back to overview</a>
+</div>
+<p class="muted">
+  Corrections kitchens shared for barcodes the lookup got wrong. A barcode
+  publishes on its own once one answer carries a weight of 2 or more, at
+  least two thirds of the barcode's total weight, and two separate accounts
+  (or one trusted account). Approve to publish an answer regardless of the
+  vote, reject to keep a barcode out of the feed (its voters lose trust), or
+  clear a ruling to hand the barcode back to the vote.
+</p>
+
+<div class="card">
+  <div class="actions-row" style="margin-bottom:0.75rem;">
+    {% for f in filters %}
+    <a class="btn {{ 'btn-outline' if f == status else 'btn-quiet' }}"
+       href="/admin/barcodes?status={{ f }}">{{ f|capitalize }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="table-wrap">
+    <table class="admin">
+      <thead>
+        <tr>
+          <th>Barcode</th><th>Answers</th><th class="num">Weight</th>
+          <th>Outcome</th><th>Latest</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><code>{{ r.barcode }}</code>
+            {% if r.was %}
+            <div class="muted small">Lookup said:
+              {% for w in r.was %}{{ w.name }}{% if w.brand %} ({{ w.brand }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}
+            </div>
+            {% endif %}
+          </td>
+          <td>
+            {% for g in r.groups %}
+            <div style="margin-bottom:0.5rem;">
+              <strong>{{ g.name }}</strong>
+              {% if g.brand %}<span class="muted">{{ g.brand }}</span>{% endif %}
+              {% if g.category %}<span class="badge">{{ g.category }}</span>{% endif %}
+              <span class="muted small">{{ g.count }} vote{{ "" if g.count == 1 else "s" }}, weight {{ g.weight }}</span>
+              <div class="muted small">
+                {% for v in g.voters %}<a href="/admin/accounts/{{ v.account_id }}">{{ v.email }}</a> ({{ v.weight }}){% if not loop.last %}, {% endif %}{% endfor %}
+              </div>
+              {% if not r.decision or r.decision.action != "approved" %}
+              <details class="inline">
+                <summary class="btn btn-quiet">Approve this answer</summary>
+                <form method="post" action="/admin/barcodes/{{ r.barcode }}/approve">
+                  <input type="hidden" name="status" value="{{ status }}">
+                  <input type="hidden" name="page" value="{{ page }}">
+                  <label for="name-{{ r.barcode }}-{{ loop.index }}">Name</label>
+                  <input type="text" name="name" id="name-{{ r.barcode }}-{{ loop.index }}" value="{{ g.name }}" required>
+                  <label for="brand-{{ r.barcode }}-{{ loop.index }}">Brand</label>
+                  <input type="text" name="brand" id="brand-{{ r.barcode }}-{{ loop.index }}" value="{{ g.brand }}">
+                  <label for="category-{{ r.barcode }}-{{ loop.index }}">Category</label>
+                  <select name="category" id="category-{{ r.barcode }}-{{ loop.index }}">
+                    <option value="">None</option>
+                    {% for c in categories %}
+                    <option value="{{ c }}" {{ "selected" if c == g.category else "" }}>{{ c }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="btn btn-outline" type="submit">Approve and publish</button>
+                </form>
+              </details>
+              {% endif %}
+            </div>
+            {% else %}
+            <span class="muted">No active votes.</span>
+            {% endfor %}
+            {% if r.rejected_votes %}
+            <div class="muted small">{{ r.rejected_votes }} rejected vote{{ "" if r.rejected_votes == 1 else "s" }}</div>
+            {% endif %}
+          </td>
+          <td class="num">{{ r.total }}{% if r.groups %}<div class="muted small">lead {{ r.share }}%</div>{% endif %}</td>
+          <td>
+            {% if r.decision and r.decision.action == "approved" %}
+            <span class="badge badge-success">approved</span>
+            {% elif r.decision and r.decision.action == "rejected" %}
+            <span class="badge badge-danger">rejected</span>
+            {% elif r.published %}<span class="badge badge-primary">published by vote</span>
+            {% else %}<span class="badge">contested</span>{% endif %}
+            {% if r.published and r.result %}
+            <div class="muted small">{{ r.result.name }}{% if r.result.brand %} ({{ r.result.brand }}){% endif %}</div>
+            {% endif %}
+          </td>
+          <td>{{ (r.latest or "-")[:10] }}</td>
+          <td>
+            <div class="actions-row">
+              {% if not r.decision or r.decision.action != "rejected" %}
+              <form class="inline" method="post" action="/admin/barcodes/{{ r.barcode }}/reject"
+                    onsubmit="return confirm('Reject this barcode? It stays out of the feed and each current voter loses trust.')">
+                <input type="hidden" name="status" value="{{ status }}">
+                <input type="hidden" name="page" value="{{ page }}">
+                <button class="btn btn-quiet" type="submit">Reject</button>
+              </form>
+              {% endif %}
+              {% if r.decision %}
+              <form class="inline" method="post" action="/admin/barcodes/{{ r.barcode }}/clear">
+                <input type="hidden" name="status" value="{{ status }}">
+                <input type="hidden" name="page" value="{{ page }}">
+                <button class="btn btn-quiet" type="submit">Clear ruling</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="muted">No barcodes in this view.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if has_prev or has_next %}
+  <div class="actions-row" style="margin-top:0.75rem;">
+    {% if has_prev %}
+    <a class="btn btn-quiet" href="/admin/barcodes?status={{ status }}&page={{ page - 1 }}">Previous</a>
+    {% endif %}
+    <span class="muted small">Page {{ page }} of {{ total }} total</span>
+    {% if has_next %}
+    <a class="btn btn-quiet" href="/admin/barcodes?status={{ status }}&page={{ page + 1 }}">Next</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

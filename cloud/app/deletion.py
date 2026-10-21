@@ -2,8 +2,10 @@
 
 Deleting a Forager account removes everything that identifies the person:
 credentials and sessions, second-factor material, paired kitchens and their
-tunnels, cloud backups (rows and files), usage history, billing rows, and
-share links. Two categories deliberately survive:
+tunnels, cloud backups (rows and files), usage history, billing rows, share
+links, and barcode corrections (a vote with no account behind it cannot be
+weighed, so it goes rather than staying anonymized). Two categories
+deliberately survive:
 
 - Published community recipes keep their content but are anonymized (the
   account link nulled, the attribution rewritten), the same way published
@@ -29,8 +31,8 @@ from sqlalchemy.orm import Session
 from . import stripe_api
 from .config import settings
 from .deps import utc_now_iso
-from .models import (Account, AdminAction, AuthSession, CloudBackup,
-                     CommunityRecipe, EmailToken, Entitlement, Instance,
+from .models import (Account, AdminAction, AuthSession, BarcodeCorrection,
+                     CloudBackup, CommunityRecipe, EmailToken, Entitlement, Instance,
                      PairingCode, RecipeRating, RecipeReport, RecoveryCode,
                      SharedRecipe, SharedRecipeReport, Subscription,
                      TotpChallenge, TunnelPeer, UsageLedger,
@@ -216,7 +218,8 @@ def delete_account(db: Session, account: Account) -> None:
     share_tokens = _delete_shares(db, account_id)
     for model in (AuthSession, EmailToken, RecoveryCode, TotpChallenge,
                   WebAuthnCredential, PairingCode, CloudBackup, UsageLedger,
-                  Subscription, Entitlement, TunnelPeer):
+                  Subscription, Entitlement, TunnelPeer,
+                  BarcodeCorrection):
         db.query(model).filter_by(account_id=account_id).delete(
             synchronize_session=False)
     # WebAuthn challenges carry the account as a bare integer (no FK).

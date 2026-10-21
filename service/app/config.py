@@ -16,7 +16,7 @@ from . import durable as _durable
 
 # Single source of truth for the app version (shown in the UI, used by the
 # update checker, and reported by FastAPI). Bump on each tagged release.
-APP_VERSION = "0.21.112"
+APP_VERSION = "0.21.119"
 
 # Single source of truth for the product's display name. The internal runtime
 # identifiers (systemd units, install paths, the foodassistant_streamdeck
@@ -1155,6 +1155,25 @@ class Settings(BaseSettings):
     # nothing, and needs no account. The user's own expiry rules always win
     # over a community value (see services/community_expiry.py).
     use_community_expiry: bool = setting(True, form=True)
+    # Community barcode fixes (FoodAssistant-mypf0). Two independent choices:
+    #
+    # share_barcode_corrections: OPT-IN, off by default, and only works with a
+    # linked Forager kitchen. When on, fixing a scanned item's name, brand or
+    # category on the Pending review screen sends that fix to Forager, where it
+    # is published only once enough trusted kitchens agree (see
+    # services/barcode_corrections.py and docs/community-barcodes.md). Unlike
+    # shelf-life points these carry free text, so each one is tied to the
+    # linked account: that is what lets Forager weigh and block contributors.
+    share_barcode_corrections: bool = setting(False, form=True)
+    # use_community_barcodes: name scanned products from the community feed
+    # (and the copy bundled with each release) before Open Food Facts. Read
+    # only, on by default, needs no account (services/community_barcodes.py).
+    use_community_barcodes: bool = setting(True, form=True)
+    # use_kitchen_history: learn from this kitchen's own Grocy journal
+    # (FoodAssistant-i9flm). Products thrown out as spoiled again and again get
+    # a shorter suggested best-by, and the Shopping page warns before an item
+    # runs out. Local only, nothing leaves the install.
+    use_kitchen_history: bool = setting(True, form=True)
 
     # How barcodes are scanned: "usb" = USB/BT HID keyboard-wedge, "camera" =
     # Pi camera / scan engine, "" = not set (user picks on Manage Pantry page).

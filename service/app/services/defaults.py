@@ -235,6 +235,16 @@ def apply_defaults(item: FoodItem, db: Session, extra_match_text: str = "",
         strict=(is_strict_item(rule_category, item.name)
                 or is_strict_item(item.category.value, None)),
     )
+    # This kitchen's own spoilage history (FoodAssistant-i9flm) can only
+    # shorten the date, and never overrides the user's explicit rule.
+    used_history = False
+    if not user_rule:
+        from .kitchen_history import learned_spoil_days, maybe_notify, shorten_days
+        standard_days = days
+        days, used_history = shorten_days(
+            days, learned_spoil_days(item.name), storage_kind(storage))
+        if used_history:
+            maybe_notify(db, item.name, days, standard_days)
     item.best_by_date = date.today() + timedelta(days=days)
 
     # Where that date came from: a rule (the user's own or a built-in) is a
@@ -242,7 +252,10 @@ def apply_defaults(item: FoodItem, db: Session, extra_match_text: str = "",
     # AI worked out, FoodAssistant-cidz); a community override keeps its own
     # source so the pending API and provenance record stay honest. Recorded to
     # best_by_provenance.py once the item lands in Grocy and an id exists.
-    item.best_by_source = "community" if source == "community" else "default"
+    if used_history:
+        item.best_by_source = "history"
+    else:
+        item.best_by_source = "community" if source == "community" else "default"
 
     return item
 
@@ -322,6 +335,10 @@ def resolve_rule_days(db: Session, name: str, category: str,
         strict=(is_strict_item(rule_category, name)
                 or is_strict_item(category, None)),
     )
+    if not user_rule:
+        from .kitchen_history import learned_spoil_days, shorten_days
+        days, _used = shorten_days(days, learned_spoil_days(name),
+                                   storage_kind(storage))
     return days
 
 

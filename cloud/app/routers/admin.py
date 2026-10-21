@@ -21,13 +21,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import usage
+from .. import barcode_trust, usage
 from ..config import PLAN_QUOTAS, settings
 from ..deps import (cookie_account, get_db, is_admin, require_same_origin,
                     utc_now_iso)
-from ..models import (Account, AdminAction, AuthSession, CommunityRecipe,
-                      Entitlement, Instance, RecipeReport, Subscription,
-                      TakedownNotice, UsageLedger)
+from ..models import (Account, AdminAction, AuthSession, BarcodeCorrection,
+                      BarcodeDecision, CommunityRecipe, Entitlement, Instance,
+                      RecipeReport, Subscription, TakedownNotice, UsageLedger)
+from .barcodes import decision_map, evaluate_all, reset_feed_cache
 from .recipes import average_rating
 
 router = APIRouter(include_in_schema=False)
@@ -639,3 +640,220 @@ def counter_notice_restore(recipe_id: int, note: str = Form(""),
     _log(db, admin, "recipe-counter-notice", recipe.submitter_account_id or 0,
          f"recipe #{recipe.id} {recipe.title}"[:255])
     return _back_to_recipes(normalize_recipe_filter(status), max(1, page))
+
+
+# --- Community barcode corrections ------------------------------------------
+
+# The review queue's filters. "contested" is everything the vote has not
+# settled and no admin has ruled on; "decided" is everything an admin ruled on.
+BARCODE_FILTERS = ("contested", "published", "decided", "all")
+BARCODES_PER_PAGE = 25
+BARCODE_TRUST_MODES = {"normal": "", "trusted": "trusted", "blocked": "blocked"}
+
+
+def normalize_barcode_filter(value: str) -> str:
+    """A safe filter key: one of BARCODE_FILTERS, or "contested"."""
+    return value if value in BARCODE_FILTERS else "contested"
+
+
+def barcode_in_filter(verdict: dict, view: str) -> bool:
+    """Whether one barcode's verdict belongs in a queue view. Pure."""
+    decided = verdict.get("decision") is not None
+    if view == "decided":
+        return decided
+    if view == "published":
+        return bool(verdict.get("published"))
+    if view == "contested":
+        return (not decided and bool(verdict.get("groups"))
+                and (not verdict.get("published")
+                     or verdict.get("share", 0) < 2 / 3))
+    return True
+
+
+def barcode_admin_row(barcode: str, verdict: dict, rows: list[dict],
+                      emails: dict[int, str], weights: dict[int, float]) -> dict:
+    """What a reviewer sees for one barcode: each answer with its weight and
+    voters, what the lookup said before, and the current outcome."""
+    groups = []
+    for group in verdict.get("groups", []):
+        votes = group["votes"]
+        sample = votes[0]
+        groups.append({
+            "name": sample.get("name"),
+            "brand": sample.get("brand") or "",
+            "category": sample.get("category") or "",
+            "count": len(votes),
+            "weight": round(group["weight"], 2),
+            "voters": [{"email": emails.get(v["account_id"], f"#{v['account_id']}"),
+                        "account_id": v["account_id"],
+                        "weight": round(weights.get(v["account_id"], 0.0), 2)}
+                       for v in votes],
+        })
+    was = sorted({(r.get("was_name") or "", r.get("was_brand") or "")
+                  for r in rows if r.get("was_name") or r.get("was_brand")})
+    latest = max((r.get("updated_at") or "" for r in rows), default="")
+    return {
+        "barcode": barcode,
+        "groups": groups,
+        "total": round(verdict.get("total", 0.0), 2),
+        "share": int(round(100 * verdict.get("share", 0.0))),
+        "published": bool(verdict.get("published")),
+        "result": verdict.get("result"),
+        "decision": verdict.get("decision"),
+        "rejected_votes": sum(1 for r in rows if r.get("status") == "rejected"),
+        "was": [{"name": n, "brand": b} for n, b in was],
+        "latest": latest,
+    }
+
+
+def _back_to_barcodes(status: str = "contested", page: int = 1) -> RedirectResponse:
+    return RedirectResponse(f"/admin/barcodes?status={status}&page={page}",
+                            status_code=303)
+
+
+@router.get("/admin/barcodes")
+def admin_barcodes(request: Request, status: str = "contested", page: int = 1,
+                   admin: Account = Depends(require_admin),
+                   db: Session = Depends(get_db)):
+    """The barcode review queue: every barcode kitchens have corrected, with
+    each competing answer, who backs it and how much their votes weigh, so a
+    reviewer can settle what the vote cannot (or overrule it)."""
+    status = normalize_barcode_filter(status)
+    page = max(1, page)
+    rows, verdicts, weights = evaluate_all(db)
+    by_barcode: dict[str, list[dict]] = {}
+    for row in rows:
+        by_barcode.setdefault(row["barcode"], []).append(row)
+    # A decision on a barcode nobody has voted on yet still shows up.
+    for barcode, decision in decision_map(db).items():
+        verdicts.setdefault(barcode, {"groups": [], "total": 0.0, "share": 0.0,
+                                      "published": decision["action"] == "approved",
+                                      "result": None, "decision": decision})
+    chosen = [b for b, v in verdicts.items() if barcode_in_filter(v, status)]
+    # Busiest first, then the most recently touched.
+    chosen.sort(key=lambda b: (len(by_barcode.get(b, [])),
+                               max((r["updated_at"] or ""
+                                    for r in by_barcode.get(b, [])), default="")),
+                reverse=True)
+    total = len(chosen)
+    page_codes = chosen[(page - 1) * BARCODES_PER_PAGE:page * BARCODES_PER_PAGE]
+    voter_ids = {r["account_id"] for b in page_codes for r in by_barcode.get(b, [])}
+    emails = ({a.id: a.email for a in
+               db.query(Account).filter(Account.id.in_(voter_ids)).all()}
+              if voter_ids else {})
+    items = [barcode_admin_row(b, verdicts[b], by_barcode.get(b, []), emails, weights)
+             for b in page_codes]
+    return templates.TemplateResponse(request, "admin_barcodes.html", {
+        "signed_in": True,
+        "status": status,
+        "filters": BARCODE_FILTERS,
+        "rows": items,
+        "categories": barcode_trust.CATEGORIES,
+        "page": page,
+        "total": total,
+        "has_prev": page > 1,
+        "has_next": page * BARCODES_PER_PAGE < total,
+    })
+
+
+def _barcode_code(barcode: str) -> str:
+    code = (barcode or "").strip()
+    if not (code.isascii() and code.isdigit() and 6 <= len(code) <= 24):
+        raise HTTPException(404, detail="Not found")
+    return code
+
+
+def _decide(db: Session, barcode: str, action: str, admin: Account,
+            name: str = "", brand: str | None = None,
+            category: str | None = None, note: str = "") -> None:
+    decision = db.query(BarcodeDecision).filter_by(barcode=barcode).first()
+    if decision is None:
+        decision = BarcodeDecision(barcode=barcode)
+        db.add(decision)
+    decision.action = action
+    decision.name = name
+    decision.brand = brand
+    decision.category = category
+    decision.admin_account_id = admin.id
+    decision.note = note[:255]
+    decision.decided_at = utc_now_iso()
+
+
+@router.post("/admin/barcodes/{barcode}/approve")
+def approve_barcode(barcode: str, name: str = Form(""), brand: str = Form(""),
+                    category: str = Form(""), status: str = Form("contested"),
+                    page: int = Form(1),
+                    admin: Account = Depends(require_admin_write),
+                    db: Session = Depends(get_db)):
+    """Publish a barcode with the given name, brand and category, whatever
+    the vote says. Votes for another answer count against their accounts."""
+    code = _barcode_code(barcode)
+    cleaned = barcode_trust.clean_correction(
+        {"barcode": code, "name": name, "brand": brand or None,
+         "category": category or None})
+    if cleaned is None:
+        raise HTTPException(400, detail="The name, brand or category is not valid")
+    _decide(db, code, "approved", admin, cleaned["name"], cleaned["brand"],
+            cleaned["category"])
+    # An earlier rejection is undone by approving: those votes are judged
+    # against the approved answer from now on instead.
+    (db.query(BarcodeCorrection).filter_by(barcode=code, status="rejected")
+     .update({"status": "active"}, synchronize_session=False))
+    db.commit()
+    reset_feed_cache()
+    _log(db, admin, "barcode-approve", 0, f"{code} {cleaned['name']}")
+    return _back_to_barcodes(normalize_barcode_filter(status), max(1, page))
+
+
+@router.post("/admin/barcodes/{barcode}/reject")
+def reject_barcode(barcode: str, note: str = Form(""),
+                   status: str = Form("contested"), page: int = Form(1),
+                   admin: Account = Depends(require_admin_write),
+                   db: Session = Depends(get_db)):
+    """Keep a barcode out of the feed and mark its current votes rejected,
+    which costs each voter trust (barcode_trust.REJECTED_PENALTY)."""
+    code = _barcode_code(barcode)
+    _decide(db, code, "rejected", admin, note=note)
+    (db.query(BarcodeCorrection).filter_by(barcode=code, status="active")
+     .update({"status": "rejected"}, synchronize_session=False))
+    db.commit()
+    reset_feed_cache()
+    _log(db, admin, "barcode-reject", 0, code)
+    return _back_to_barcodes(normalize_barcode_filter(status), max(1, page))
+
+
+@router.post("/admin/barcodes/{barcode}/clear")
+def clear_barcode(barcode: str, status: str = Form("contested"),
+                  page: int = Form(1),
+                  admin: Account = Depends(require_admin_write),
+                  db: Session = Depends(get_db)):
+    """Remove the ruling and hand the barcode back to the vote. Votes a
+    rejection marked go back to counting, and stop costing their accounts."""
+    code = _barcode_code(barcode)
+    decision = db.query(BarcodeDecision).filter_by(barcode=code).first()
+    if decision is not None:
+        if decision.action == "rejected":
+            (db.query(BarcodeCorrection).filter_by(barcode=code, status="rejected")
+             .update({"status": "active"}, synchronize_session=False))
+        db.delete(decision)
+        db.commit()
+        reset_feed_cache()
+        _log(db, admin, "barcode-clear", 0, code)
+    return _back_to_barcodes(normalize_barcode_filter(status), max(1, page))
+
+
+@router.post("/admin/accounts/{account_id}/barcode-trust")
+def set_barcode_trust(account_id: int, mode: str = Form("normal"),
+                      admin: Account = Depends(require_admin_write),
+                      db: Session = Depends(get_db)):
+    """Set an account's standing for barcode corrections: normal (weight
+    earned from its record), trusted (a heavy vote that can publish alone),
+    or blocked (submissions refused and its votes weigh nothing)."""
+    account = _target(db, account_id)
+    if mode not in BARCODE_TRUST_MODES:
+        raise HTTPException(400, detail="Unknown barcode trust mode")
+    account.barcode_trust = BARCODE_TRUST_MODES[mode]
+    db.commit()
+    reset_feed_cache()
+    _log(db, admin, f"barcode-trust-{mode}", account.id)
+    return _back(account.id)

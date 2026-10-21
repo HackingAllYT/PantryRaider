@@ -27,6 +27,36 @@ async def get_suggestions(days: int = 30, min_consumes: int = 2):
     return {"items": items, "days": days}
 
 
+@router.get("/runout")
+async def get_runout(horizon: int = 7):
+    """In-stock products expected to run out soon, from this kitchen's own
+    consumption rate (FoodAssistant-i9flm). Empty when the feature is off or
+    nothing has been learned yet."""
+    from ..config import settings
+    from ..services import kitchen_history
+    if not settings.use_kitchen_history:
+        return {"items": []}
+    rates = kitchen_history.consumption_rates()
+    if not rates:
+        return {"items": []}
+    g = _client()
+    try:
+        stock_rows = await g._get("/stock")
+        products = await g.get_products()
+    except GrocyError as e:
+        raise HTTPException(502, str(e))
+    stock = {}
+    for row in stock_rows or []:
+        try:
+            stock[str(row.get("product_id"))] = float(row.get("amount") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    names = {str(p.get("id")): p.get("name") or "" for p in products or []}
+    items = kitchen_history.forecast_runout(
+        rates, stock, names, horizon_days=max(1, min(horizon, 30)))
+    return {"items": items}
+
+
 # Stock journal -----------------------------------------------------------
 
 @router.get("/stock-log")

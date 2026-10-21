@@ -11,6 +11,15 @@ function options(list, selected) {
     `<option value="${v}" ${v===selected?'selected':''}>${label}</option>`).join('');
 }
 
+// The storage choices for one row. A product Grocy already knew keeps its own
+// location (say "Basement Fridge"), listed first and selected until another
+// area is picked.
+function storageOptions(item) {
+  if (!item.grocy_location) return options(STORAGES, item.storage_type);
+  return `<option value="grocy" selected>${PR.esc(item.grocy_location)}</option>`
+    + options(STORAGES, null);
+}
+
 function pendingNotice(text) {
   const el = document.getElementById('pending-notice');
   if (!el) return;
@@ -92,7 +101,7 @@ async function loadPending(signal) {
             <label class="form-label small text-body-secondary mb-0 d-md-none" for="pending-storage-${item.id}">Storage</label>
             <select class="form-select form-select-sm" id="pending-storage-${item.id}" aria-label="Storage"
                     data-on-change="patchItem(${item.id}, 'storage_type', this.value, this)">
-              ${options(STORAGES, item.storage_type)}
+              ${storageOptions(item)}
             </select>
           </div>
           <div class="col-6 col-md-2">
@@ -162,6 +171,9 @@ async function patchItem(id, field, value, el) {
     });
     const item = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(item.detail || r.statusText);
+    if (el && field === 'storage_type' && !item.grocy_location) {
+      el.querySelector('option[value="grocy"]')?.remove();
+    }
     if (el) {
       el.classList.add('field-saved');
       setTimeout(() => el.classList.remove('field-saved'), 800);
@@ -328,12 +340,52 @@ function actionItemCard(it) {
       && it.payload && it.payload.credential_id) {
     btns.appendChild(actionBtn('Remove key', 'outline-danger', () => removeUnusedKey(it)));
   }
-  btns.appendChild(actionBtn('Snooze 24h', 'outline-secondary', () => actionItemAct(it.id, 'snooze')));
-  btns.appendChild(actionBtn('Archive', 'outline-secondary', () => actionItemAct(it.id, 'archive')));
+  // Kitchen history shortened a best-by date (FoodAssistant-p3ind): keep it,
+  // or turn the learning off from right here.
+  if (it.kind === 'kitchen_history') {
+    btns.appendChild(actionBtn('Got it', 'outline-secondary', () => actionItemAct(it.id, 'resolve')));
+    if (section && section.dataset.managesSettings === '1') {
+      btns.appendChild(actionBtn('Turn off', 'outline-warning', () => turnOffKitchenHistory()));
+    } else {
+      const where = document.createElement('div');
+      where.className = 'meta-text';
+      where.textContent = 'To turn this off, ask whoever manages Pantry Raider to use Settings, Inventory & Storage on the main server.';
+      text.appendChild(where);
+    }
+  } else {
+    btns.appendChild(actionBtn('Snooze 24h', 'outline-secondary', () => actionItemAct(it.id, 'snooze')));
+    btns.appendChild(actionBtn('Archive', 'outline-secondary', () => actionItemAct(it.id, 'archive')));
+  }
   body.appendChild(text);
   body.appendChild(btns);
   wrap.appendChild(body);
   return wrap;
+}
+
+async function turnOffKitchenHistory() {
+  try {
+    const r = await fetch('setup/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ use_kitchen_history: false }),
+    });
+    if (!r.ok) throw new Error(String(r.status));
+  } catch (e) {
+    showToast('Could not turn it off. Try Settings, Inventory & Storage.', true);
+    return;
+  }
+  // Clear every open notice of this kind, then redraw the inbox once.
+  try {
+    const r = await fetch('action-items', { cache: 'no-store' });
+    const data = r.ok ? await r.json() : { items: [] };
+    for (const it of data.items || []) {
+      if (it.kind === 'kitchen_history') {
+        await fetch('action-items/' + encodeURIComponent(it.id) + '/resolve', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      }
+    }
+  } catch (e) { /* the setting is off; leftover notices can be dismissed */ }
+  showToast('Best-by dates will use the standard estimates again.');
+  loadActionItems();
 }
 
 function actionBtn(label, variant, onclick) {

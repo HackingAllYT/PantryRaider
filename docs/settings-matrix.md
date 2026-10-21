@@ -101,8 +101,9 @@ scanner is physically attached to one machine, so each device sets its own port
 
 ## Community shelf life
 
-Both switches live on the Inventory & Storage pane of a main install. They
-are not offered on a Pi Remote at all: pending scans, expiry suggestions, and
+These switches live on the Inventory & Storage pane of a main install.
+`use_kitchen_history` learns only from this install's own Grocy journal and
+sends nothing anywhere. They are not offered on a Pi Remote at all: pending scans, expiry suggestions, and
 commits all happen on the main server, so the server's setting is the one
 that matters. What they do (and exactly what is and is not shared) is on
 [Community shelf life and privacy](community-shelf-life.md).
@@ -111,6 +112,9 @@ that matters. What they do (and exactly what is and is not shared) is on
 | --- | --- | --- | --- | --- |
 | `use_community_expiry` | | Editable | Editable | Not present |
 | `share_expiry_learning` | | Editable (opt-in, off by default) | Editable (opt-in, off by default) | Not present |
+| `use_community_barcodes` | | Editable | Editable | Not present |
+| `share_barcode_corrections` | | Editable (opt-in, off by default, needs a linked Forager kitchen) | Editable (opt-in, off by default, needs a linked Forager kitchen) | Not present |
+| `use_kitchen_history` | | Editable | Editable | Not present |
 
 ## Grocy (inventory backend)
 

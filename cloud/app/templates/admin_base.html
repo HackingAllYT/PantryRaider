@@ -34,6 +34,7 @@
 {% set path = request.url.path %}
 {% set on_overview = path == "/admin" or path.startswith("/admin/accounts") %}
 {% set on_recipes = path.startswith("/admin/recipes") %}
+{% set on_barcodes = path.startswith("/admin/barcodes") %}
 {% set on_stats = path == "/admin/stats" %}
 <div class="settings-head">
   <h1 style="margin-bottom:0.15rem;">Admin</h1>
@@ -46,6 +47,7 @@
       <div class="nav-head">Manage</div>
       <a href="/admin#accounts">{{ svgicon('user') }}Accounts</a>
       <a href="/admin/recipes" class="{{ 'active' if on_recipes else '' }}">{{ svgicon('people') }}Recipe moderation</a>
+      <a href="/admin/barcodes" class="{{ 'active' if on_barcodes else '' }}">{{ svgicon('barcode') }}Barcode corrections</a>
       <a href="/admin/stats" class="{{ 'active' if on_stats else '' }}">{{ svgicon('gauge') }}Trials and stats</a>
     </nav>
   </aside>

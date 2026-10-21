@@ -287,3 +287,25 @@ def test_a_handler_that_never_replies_closes_rather_than_hangs(server):
             assert (await c.get(f"{base}/echo")).status_code == 200
 
     asyncio.run(run())
+
+
+def test_a_caller_that_hung_up_gets_no_traceback():
+    # A long update outlives the caller's timeout; replying to the closed
+    # socket must not raise (it used to log two tracebacks per update).
+    class _Gone:
+        def write(self, _b):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self):
+            pass
+
+    h = host_bridge._Handler.__new__(host_bridge._Handler)
+    h.wfile = _Gone()
+    h.request_version = "HTTP/1.1"
+    h.requestline = "POST /update HTTP/1.1"
+    h.command = "POST"
+    h.client_address = ("127.0.0.1", 0)
+    h.close_connection = False
+    h.log_message = lambda *a: None
+    h._send(200, {"ok": True})
+    assert h.close_connection is True
