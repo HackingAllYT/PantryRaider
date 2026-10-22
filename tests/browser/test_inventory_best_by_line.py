@@ -1,16 +1,18 @@
 """The line of best-by dates under an Inventory row's name, in a real browser.
 
-A product's stock in one place is one row with the earliest best-by date. A
-row whose stock has more than one date lists them under the name, earliest
-first, such as "2 by Oct 24 · 8 by Nov 20": three at most, then how many more,
-with every date in the title. Like the location above it, the line keeps to
-one line and is cut short, except on a phone, where it may wrap; at neither
-width may it push the page sideways. Stock that never expires says No expiry
-on its badge instead of a day count of several hundred thousand.
+With One row per best-by date turned off, a product's stock in one place is
+one row with the earliest best-by date. A row whose stock has more than one
+date lists them under the name, earliest first, such as "2 by Oct 24 · 8 by
+Nov 20": three at most, then how many more, with every date in the title. Like
+the location above it, the line keeps to one line and is cut short, except on
+a phone, where it may wrap; at neither width may it push the page sideways.
+Stock that never expires says No expiry on its badge instead of a day count of
+several hundred thousand.
 
-The dashboard answers with canned rows here, and the page runs in en-US with
-today fixed at Oct 21, 2026, so the dates read the same on any machine and on
-any day.
+The page asks with dates=auto and the server's setting picks the reading, so
+the dashboard answers here with canned rows shaped the way it reads them with
+the switch off. The page runs in en-US with today fixed at Oct 21, 2026, so the
+dates read the same on any machine and on any day.
 """
 from __future__ import annotations
 
@@ -114,7 +116,7 @@ def _line(page, name):
 def test_a_row_lists_its_best_by_dates_earliest_first(inventory):
     page = inventory(**DESKTOP)
     assert page.asked and all(
-        "/inventory/dashboard?sort=expiry_asc&dates=breakdown" in url for url in page.asked)
+        "/inventory/dashboard?sort=expiry_asc&dates=auto" in url for url in page.asked)
     line = _line(page, "Coconut Yogurt")
     assert line.evaluate(_SEEN) == "2 by Oct 24 · 8 by Nov 20"
     assert line.evaluate(_HEARD) == "Best-by dates: 2 by Oct 24, 8 by Nov 20"

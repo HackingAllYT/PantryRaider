@@ -57,6 +57,7 @@ OLD_SAVEABLE = {
     "hosted_config_snapshot", "hosted_stack_parked", "hygrometer_devices",
     "hygrometers_enabled", "immich_album_id", "immich_api_key",
     "immich_base_url", "kiosk_auto_home_enabled", "kiosk_auto_home_exempt",
+    "inventory_rows_per_best_by",
     "kiosk_auto_home_seconds", "kiosk_pin", "kiosk_readonly_when_locked",
     "kiosk_screen_is_admin", "kiosk_split_enabled", "kiosk_split_lock_primary",
     "kiosk_split_primary", "kiosk_split_secondary", "kitchen_appliances",
@@ -114,6 +115,7 @@ OLD_SATELLITE_PULL_FIELDS = {
     "fleet_label_printer_queue", "gemini_api_key", "gemini_model",
     "grocy_base_url", "grocy_public_url", "ha_camera_popup_seconds",
     "ha_events_enabled", "kitchen_appliances", "label_layout_json",
+    "inventory_rows_per_best_by",
     "label_show_logo", "llm_expiry_enabled", "mealie_base_url",
     "mealie_connected", "mealie_public_url", "ollama_base_url", "ollama_model",
     "openai_api_key", "openai_model", "perishable_days", "recipe_source",
@@ -134,6 +136,7 @@ OLD_SATELLITE_READONLY_FIELDS = {
     "fleet_label_printer_queue", "gemini_api_key", "gemini_model",
     "grocy_api_key", "grocy_base_url", "grocy_public_url",
     "ha_camera_popup_seconds", "ha_events_enabled", "kitchen_appliances",
+    "inventory_rows_per_best_by",
     "label_layout_json", "label_show_logo", "llm_expiry_enabled",
     "mealie_api_key", "mealie_base_url", "mealie_connected",
     "mealie_public_url", "ollama_base_url", "ollama_model", "openai_api_key",
@@ -362,6 +365,8 @@ ADDED_TO_SETUP_PAYLOAD = {
     'forager_remote_access': ('bool | None', None),
     # Kitchen history learning toggle (FoodAssistant-i9flm).
     'use_kitchen_history': ('bool', True),
+    # One row per best-by date on the Inventory page, on by default.
+    'inventory_rows_per_best_by': ('bool', True),
 }
 # The pre-setup Forager browser marker is a session-binding value.
 ADDED_SECRETS = {"cloud_link_session"}

@@ -147,6 +147,14 @@ function savePaneKitchenHistory(btn) {
   }, btn, 'kitchen-history-save-result');
 }
 
+// Inventory page (Inventory pane): whether a place holding more than one
+// best-by date gets a row per date. Its own save, like kitchen history.
+function savePaneInventoryRows(btn) {
+  return savePane({
+    inventory_rows_per_best_by: chk('inventory_rows_per_best_by'),
+  }, btn, 'inventory-rows-save-result');
+}
+
 // Device hostname (link building) lives in the Devices pane; it has its own
 // save so the card posts only its own field.
 function saveDeviceHostname(btn) {

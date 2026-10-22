@@ -64,16 +64,27 @@ keeps the date it had.
 
 ## Every best-by date on a row
 
-Food you bought on different days keeps the best-by date of each purchase, but
-the Inventory dashboard lists a product once for each place you keep it, with
-the earliest date on its badge. So when a row holds more than one date, a
-short line under the name lists how many have each date, earliest first, such
-as "2 by Oct 24 · 8 by Nov 20". Two coconut yogurts due in 3 days and a new
-pack of 8 due in a month no longer look like 10 yogurts all due in 3 days.
-Stock without a date shows as "with no date" and stock that never expires as
-"with no expiry", and a row that never expires says No expiry on its badge.
-After three dates the line counts the rest ("+2 more"); point at it with a
-mouse to see them all.
+Food you bought on different days keeps the best-by date of each purchase. So
+when one place holds a product with more than one best-by date, the Inventory
+dashboard gives each date a row of its own: two coconut yogurts due in 3 days
+and a new pack of 8 due in a month show as a row of 2 and a row of 8, each with
+its own badge, instead of 10 yogurts all due in 3 days. The buttons on such a
+row only touch the items with that date: Use one, Mark one opened, Mark all
+consumed, Move, Print label and a new date in Edit all stay with that row, and
+the buttons and their questions say which date they are for. A category change
+in Edit still applies to the whole product, and a place where everything has
+the same date keeps its one row. Grocy decides for itself which item it takes
+next, so once in a while it cannot act on exactly that row's items; the button
+then says why in a short note, and nothing changes.
+
+To list each product once per place instead, turn off One row per best-by date
+in Settings, Inventory. A row that holds more than one date then gets a short
+line under the name listing how many have each date, earliest first, such as
+"2 by Oct 24 · 8 by Nov 20". Stock without a date shows as "with no date" and
+stock that never expires as "with no expiry". After three dates the line counts
+the rest ("+2 more"); point at it with a mouse to see them all. Either way, a
+row that never expires says No expiry on its badge, and the choice is the same
+on every phone, computer and kitchen screen that uses this server.
 
 ## Moving food to the freezer adjusts the date for you
 

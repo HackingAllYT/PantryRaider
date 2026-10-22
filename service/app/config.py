@@ -1984,6 +1984,12 @@ class Settings(BaseSettings):
     # User-defined storage categories beyond the four built-ins. Each is a
     # dict {key,label,icon,color,bg,location,match}. See storage_categories.py.
     custom_storage_categories: list = setting([], pull=True)
+    # Inventory page: a product with more than one best-by date in one place
+    # gets a row for each date, and that row's buttons act only on the stock
+    # with that date. On by default. Off, each product gets one row per place,
+    # with a short line under its name listing how many items have each date.
+    # Pulled, so a Pi Remote's Inventory page lists stock like its server's.
+    inventory_rows_per_best_by: bool = setting(True, form=True, pull=True)
 
     data_dir: str = setting("/app/data", save=False)
     secret_key: str = setting("", secret=True)

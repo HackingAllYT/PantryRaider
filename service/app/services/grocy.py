@@ -80,6 +80,10 @@ class GrocyError(Exception):
     broken, which never comes back on its own), or "bad_response" (something
     other than Grocy's API answered). ``hint`` is an optional user-forward
     fix for a recognised problem (see known_grocy_fix_hint).
+
+    A per-date Inventory row's actions add two, both raised before anything
+    is written: "group" (Grocy would take other stock than the row's own) and
+    "gone" (the row's stock is no longer there).
     """
 
     def __init__(self, message: str = "", hint: str | None = None,
@@ -561,6 +565,230 @@ def _row_after_date_write(entries: list[dict], from_id: int,
     return own
 
 
+# --- One row per best-by date ---------------------------------------------------
+# A per-date Inventory row is the stock with one best-by date in one place (a
+# "group"), and its buttons must take only that stock. Grocy takes stock by its
+# stock id, the hash consume, open and transfer accept as stock_entry_id, and
+# walks the rows carrying it in the order /stock/products/{id}/entries lists
+# them: the product's default consume location first, then opened, then
+# earliest due (undated stock first). One stock id can sit on rows of other
+# dates and places (a partial transfer copies it, a merge renames rows to it),
+# so a group row is only safe to name when Grocy would take it first for its
+# stock id. The actions below take one such row at a time by its exact amount
+# (a summed amount can leave a float crumb behind or spill onto the next row),
+# and refuse before writing anything when the stock they need sits behind
+# other stock. Their date token is an ISO date, or "none" for stock with no
+# best-by date.
+
+# What a per-date row answers when its stock is gone (GrocyError kind "gone"),
+# and when it is weighed with its container: Grocy reads a consume amount for
+# those as the gross weight and opens or moves none of them (kind "group").
+BEST_BY_ROW_GONE = "This row is no longer in stock."
+BEST_BY_ROW_TARE = ("Pantry Raider can't split a product weighed with its container "
+                    "by date, so nothing was changed.")
+
+
+def _amount(entry: dict) -> float:
+    try:
+        return float(entry.get("amount") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_open(entry: dict) -> bool:
+    return str(entry.get("open") or "0") not in ("0", "", "False", "false")
+
+
+def _token_date(best_before_date: str) -> str | None:
+    """The best-by date a per-date row's token stands for. Pure."""
+    return None if best_before_date == "none" else best_before_date
+
+
+def in_best_by_group(entry: dict, location_id, best_before_date: str) -> bool:
+    """True when a stock entry belongs to the per-date row of ``location_id``
+    and ``best_before_date`` ("none" for stock with no date). Pure.
+
+    Dust is not stock (see _DUST), so it belongs to no row.
+    """
+    return (_amount(entry) > _DUST
+            and _location_id(entry) == int(location_id or 0)
+            and (entry.get("best_before_date") or None) == _token_date(best_before_date))
+
+
+def _group_rows_and_firsts(entries: list[dict], location_id, best_before_date: str,
+                           unopened: bool) -> list[tuple[dict, dict]]:
+    """Each group row with the row Grocy takes first for its stock id, in
+    Grocy's order. Pure.
+
+    Consume and transfer walk the rows at ``location_id``; open walks the
+    unopened rows of the whole product. Rows without a stock id cannot be
+    named, and dust is not stock.
+    """
+    firsts: dict[str, dict] = {}
+    out = []
+    for e in entries or []:
+        stock_id = e.get("stock_id")
+        if not stock_id or _amount(e) <= _DUST:
+            continue
+        if _is_open(e) if unopened else _location_id(e) != int(location_id or 0):
+            continue
+        first = firsts.setdefault(stock_id, e)
+        if in_best_by_group(e, location_id, best_before_date):
+            out.append((e, first))
+    return out
+
+
+def best_by_group_head(entries: list[dict], location_id, best_before_date: str, *,
+                       unopened: bool = False) -> dict | None:
+    """The first group row Grocy would take first for its own stock id, or
+    None. Pure.
+
+    ``entries`` is /stock/products/{id}/entries exactly as Grocy returned it:
+    that list is the order Grocy walks, so it is never re-sorted. Naming that
+    row's stock id (with the location, for consume and transfer) makes Grocy
+    start on that very row. With ``unopened`` the pool is what open walks: the
+    unopened rows carrying the stock id anywhere in the product.
+    """
+    return next((row for row, first in _group_rows_and_firsts(
+        entries, location_id, best_before_date, unopened) if first is row), None)
+
+
+def best_by_group_blocker(entries: list[dict], location_id, best_before_date: str, *,
+                          unopened: bool = False) -> dict | None:
+    """The first row outside the group that Grocy would take before a group
+    row carrying the same stock id, or None. Pure.
+
+    It is what a refusal names: an opened unit, an earlier date, another place.
+    """
+    return next((first for _row, first in _group_rows_and_firsts(
+        entries, location_id, best_before_date, unopened)
+        if not in_best_by_group(first, location_id, best_before_date)), None)
+
+
+def best_by_group_reach(entries: list[dict], location_id, best_before_date: str,
+                        amount: float | None = None) -> float:
+    """How much of a group the head-by-head walk takes: all of it, or up to
+    ``amount``. Pure.
+
+    It takes best_by_group_head's row whole (or the rest of ``amount``) and
+    walks on without it, as the consume and move loops do. Taking a row can
+    leave a row of another date first for the same stock id, and then the rest
+    of the group is out of reach.
+    """
+    rows = list(entries or [])
+    reached = 0.0
+    while amount is None or amount - reached > _DUST:
+        head = best_by_group_head(rows, location_id, best_before_date)
+        if head is None:
+            break
+        take = _amount(head)
+        if amount is not None and take - (amount - reached) > _DUST:
+            take = amount - reached
+        reached += take
+        rows = [e for e in rows if e is not head]
+    return reached
+
+
+def _use_refusal(blocker: dict | None, best_before_date: str) -> str:
+    """Why a per-date row's consume would take other stock first. Pure."""
+    if blocker is not None and _is_open(blocker):
+        return "Grocy would use an opened one first, so nothing was used."
+    blocker_date = (blocker or {}).get("best_before_date")
+    row_date = _token_date(best_before_date)
+    if blocker_date and row_date and blocker_date < row_date:
+        return "Grocy would use one with an earlier best-by date first, so nothing was used."
+    return "Grocy would use other stock first, so nothing was used."
+
+
+def best_by_take(entries: list[dict], location_id, best_before_date: str,
+                 amount: float) -> float:
+    """How much a per-date row's consume takes, worked out before any write.
+    Pure.
+
+    Asking for at least what the row holds takes all of it as Grocy holds it
+    now, so Use one on half a unit uses the half. Raises GrocyError "gone"
+    when the row holds nothing, and "group" when the head-by-head walk cannot
+    reach the amount.
+    """
+    total = sum(_amount(e) for e in entries or []
+                if in_best_by_group(e, location_id, best_before_date))
+    if total <= _DUST:
+        raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
+    want = total if amount >= total - _DUST else float(amount)
+    if best_by_group_reach(entries, location_id, best_before_date, want) < want - _DUST:
+        raise GrocyError(_use_refusal(best_by_group_blocker(
+            entries, location_id, best_before_date), best_before_date), kind="group")
+    return want
+
+
+def best_by_label_stock_id(rows: list[dict], location_id,
+                           best_before_date: str) -> str | None:
+    """The stock id a label printed from a per-date row codes, or None. Pure.
+
+    ``rows`` are one product's raw stock rows. A scanned label uses up stock
+    by its stock id alone, wherever in the product it is, so the newest group
+    row whose stock id no other row carries wins; failing that, the newest
+    group row. "Newest" is the row created last, as for any label.
+    """
+    group = [r for r in rows or []
+             if r.get("stock_id") and in_best_by_group(r, location_id, best_before_date)]
+    if not group:
+        return None
+    elsewhere = {r.get("stock_id") for r in rows or []
+                 if _amount(r) > _DUST and not in_best_by_group(r, location_id, best_before_date)}
+    own = [r for r in group if r["stock_id"] not in elsewhere]
+    newest = max(own or group, key=lambda r: (str(r.get("row_created_timestamp") or ""),
+                                              _int_or_none(r.get("id")) or 0))
+    return newest["stock_id"]
+
+
+def _log_rows(booked, kind: str) -> list[dict]:
+    """The stock_log rows of one type in a consume, open or transfer answer,
+    float dust left out. Pure."""
+    return [r for r in (booked if isinstance(booked, list) else [])
+            if isinstance(r, dict) and r.get("transaction_type") == kind
+            and abs(_amount(r)) > _DUST]
+
+
+def _booked_in_group(row: dict, location_id, best_before_date: str) -> bool:
+    """True when a stock_log row booked a per-date row's own stock. Pure.
+
+    A log row carries the place and best-by date the stock had before the
+    booking, so it compares with the row's own.
+    """
+    return (_location_id(row) == int(location_id or 0)
+            and (row.get("best_before_date") or None) == _token_date(best_before_date))
+
+
+def _best_by_arrivals(booked, location_id,
+                      best_before_date: str) -> tuple[list[dict], list[dict]]:
+    """The transfer_to rows of a transfer answer that carried a per-date row's
+    own stock, and those that carried other stock. Pure.
+
+    Grocy books each moved row as a pair sharing one correlation id: a
+    transfer_from row with the place and date the stock left with, and a
+    transfer_to row with the place and date it arrived with.
+    """
+    sent = {r.get("correlation_id"): r for r in _log_rows(booked, "transfer_from")}
+    own, other = [], []
+    for row in _log_rows(booked, "transfer_to"):
+        source = sent.get(row.get("correlation_id"))
+        if source is not None and _booked_in_group(source, location_id, best_before_date):
+            own.append(row)
+        else:
+            other.append(row)
+    return own, other
+
+
+def _nothing_booked(e: Exception) -> bool:
+    """True when Grocy answered that no row carried the stock id it was sent.
+
+    A merge since the read can rename a stock id while the stock is still
+    there, so this means "read again", not "gone". Grocy booked nothing.
+    """
+    return "No transaction was found" in str(e)
+
+
 def _int_or_none(value) -> int | None:
     try:
         return int(value) if value not in (None, "") else None
@@ -831,6 +1059,167 @@ class GrocyClient:
             "amount": amount,
         })
 
+    async def _refuse_tare_weight(self, product_id: int) -> None:
+        """Refuse a per-date action on a product weighed with its container.
+
+        Grocy reads a consume amount for such a product as the gross weight
+        on the scale, and opens or moves none of it, so a per-date row cannot
+        act on its own stock alone (GrocyError kind "group", before any write).
+        """
+        for product in await self.get_products():
+            if _int_or_none(product.get("id")) == int(product_id):
+                if str(product.get("enable_tare_weight_handling") or "0") not in ("0", ""):
+                    raise GrocyError(BEST_BY_ROW_TARE, kind="group")
+                return
+
+    async def consume_stock_group(self, product_id: int, amount: float,
+                                  location_id: int, best_before_date: str,
+                                  spoiled: bool = False) -> dict:
+        """Consume ``amount`` from one per-date row: only the stock with
+        ``best_before_date`` ("none" for stock with no date) at ``location_id``.
+
+        A consume with just the location takes what Grocy would use next
+        there, an opened unit or an earlier date first. This one names a stock
+        id on every call and takes one Grocy row at a time, always the row
+        Grocy takes first for its stock id (best_by_group_head), by its exact
+        amount. When the amount needs rows that sit behind other stock,
+        nothing is written (best_by_take).
+
+        Every booking Grocy reports is checked against the row's place and
+        date, and a stock id renamed by a merge since the read (Grocy then
+        books nothing) is read again once. Another writer can still get in the
+        way part-way, so the answer says how much was ``consumed`` of how much
+        was ``requested``, and ``complete`` is False when that fell short.
+        """
+        await self._refuse_tare_weight(product_id)
+        entries_path = f"/stock/products/{product_id}/entries"
+        entries = await self._get(entries_path) or []
+        want = best_by_take(entries, location_id, best_before_date, amount)
+        consumed, stopped, reread = 0.0, False, False
+        # Each call takes one row, so this only caps a Grocy that keeps
+        # answering without booking.
+        for _ in range(len(entries) + 10):
+            left = want - consumed
+            if left <= _DUST:
+                break
+            head = best_by_group_head(entries, location_id, best_before_date)
+            if head is None:
+                stopped = True
+                break
+            row_amount = _amount(head)
+            try:
+                booked = await self._post(f"/stock/products/{product_id}/consume", {
+                    # The row's own amount exactly as Grocy listed it, unless
+                    # less than the whole row is wanted.
+                    "amount": row_amount if row_amount - left <= _DUST else left,
+                    "spoiled": bool(spoiled),
+                    "location_id": int(location_id),
+                    "stock_entry_id": head["stock_id"],
+                })
+            except GrocyError as e:
+                if reread or not _nothing_booked(e):
+                    # Once some of the row is used, a failure is a short use:
+                    # an error would read as if nothing had changed.
+                    if consumed > _DUST:
+                        stopped = True
+                        break
+                    raise
+                reread = True
+                entries = await self._get(entries_path) or []
+                if consumed <= _DUST:
+                    # Nothing is used yet, so the refusals still come first.
+                    want = best_by_take(entries, location_id, best_before_date, amount)
+                continue
+            rows = _log_rows(booked, "consume")
+            own = [r for r in rows if _booked_in_group(r, location_id, best_before_date)]
+            consumed -= sum(_amount(r) for r in own)
+            if not own or len(own) < len(rows):
+                # Grocy took other stock too, or nothing at all: stop here.
+                stopped = True
+                break
+            entries = await self._get(entries_path) or []
+        return {
+            "product_id": product_id,
+            "consumed": consumed,
+            "requested": want,
+            "complete": not stopped and want - consumed <= _DUST,
+        }
+
+    async def open_stock_group(self, product_id: int, location_id: int,
+                               best_before_date: str) -> dict:
+        """Mark one unit of one per-date row opened: only stock with
+        ``best_before_date`` ("none" for stock with no date) at ``location_id``.
+
+        Grocy's open has no location: it opens the next unopened unit
+        anywhere in the product, or, given a stock id, the first unopened row
+        carrying it, wherever that is (best_by_group_head with ``unopened``).
+        The amount stops at that row's own: asked for 1 on a row holding half
+        a unit, Grocy would open the other half from the next row with the
+        stock id, in another place or with another date.
+
+        Returns how much Grocy ``opened``, ``new_best_by``, the date the
+        opened unit carries now (Grocy shortens it to the product's days after
+        opening, never past the old date), and ``complete``, False when Grocy
+        opened anything outside the row.
+        """
+        await self._refuse_tare_weight(product_id)
+        entries_path = f"/stock/products/{product_id}/entries"
+        for reread in (False, True):
+            entries = await self._get(entries_path) or []
+            head = await self._best_by_open_head(entries, location_id, best_before_date)
+            amount = min(1.0, _amount(head))
+            try:
+                booked = await self._post(f"/stock/products/{product_id}/open", {
+                    "amount": amount,
+                    "stock_entry_id": head["stock_id"],
+                })
+                break
+            except GrocyError as e:
+                # A stock id renamed by a merge since the read: read again once.
+                if reread or not _nothing_booked(e):
+                    raise
+        rows = _log_rows(booked, "product-opened")
+        own = [r for r in rows if _booked_in_group(r, location_id, best_before_date)]
+        opened = sum(_amount(r) for r in own)
+        # The opened part keeps the row's id; the unopened rest gets a new one.
+        fresh = await self._fresh_entry(product_id, head["id"])
+        return {
+            "product_id": product_id,
+            "opened": opened,
+            "new_best_by": (fresh or {}).get("best_before_date"),
+            "complete": len(own) == len(rows) and amount - opened <= _DUST,
+        }
+
+    async def _best_by_open_head(self, entries: list[dict], location_id,
+                                 best_before_date: str) -> dict:
+        """The row a per-date row's open names, or the GrocyError saying why
+        there is none (nothing is written either way)."""
+        group = [e for e in entries if in_best_by_group(e, location_id, best_before_date)]
+        if not group:
+            raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
+        if all(_is_open(e) for e in group):
+            raise GrocyError("Everything on this row is already open.", kind="group")
+        head = best_by_group_head(entries, location_id, best_before_date, unopened=True)
+        if head is not None:
+            return head
+        blocker = best_by_group_blocker(entries, location_id, best_before_date, unopened=True)
+        if blocker is None:
+            message = "Grocy would open other stock first, so nothing was opened."
+        elif _location_id(blocker) != int(location_id):
+            place = ""
+            try:
+                for loc in await self._cached_list("/objects/locations"):
+                    if _int_or_none(loc.get("id")) == _location_id(blocker):
+                        place = loc.get("name") or ""
+            except GrocyError:
+                pass  # the name only words the refusal
+            message = (f"Grocy would open one in {place or 'another place'} first, "
+                       "so nothing was opened.")
+        else:
+            message = ("Grocy would open one with another best-by date first, "
+                       "so nothing was opened.")
+        raise GrocyError(message, kind="group")
+
     async def set_stock_amount(self, product_id: int, amount: float,
                                best_before_date: str | None = None) -> dict:
         """Inventory correction: set the product's absolute stock amount.
@@ -945,6 +1334,15 @@ class GrocyClient:
         with no stock of its own is left out. Without it the rows are the ones
         every other caller, the Home Assistant sensor among them, has always
         had.
+
+        ``dates="split"`` reads the same way, but a place holding more than one
+        best-by date gets a row per date instead of the list: each carries
+        ``by_date``, that date's own amount, opened amount and newest added
+        date, and ``stock_entry_id`` for its label (best_by_label_stock_id).
+        A place with a single date keeps its one row, and so does stock with
+        no recorded place, which no action could take by date; neither lists
+        its dates. A product's rows come earliest date first, so a stable
+        sort keeps them that way among ties.
         """
         # None of these four reads depends on another, so the dashboard waits
         # once instead of four times over. return_exceptions keeps a Grocy
@@ -993,8 +1391,15 @@ class GrocyClient:
         # The breakdown reads every place from the raw rows alone, date by
         # date. /stock's best-by for a product kept in one place also counts
         # its sub-products' stock, so that row could show a date missing from
-        # its own list of dates.
-        by_date = stock_by_location_and_date(stock_rows) if dates == "breakdown" else {}
+        # its own list of dates. The split reads them the same way.
+        by_date = (stock_by_location_and_date(stock_rows)
+                   if dates in ("breakdown", "split") else {})
+        # A per-date row's label codes one of the row's own stock ids.
+        product_rows: dict[int, list[dict]] = {}
+        if dates == "split":
+            for stock_row in stock_rows:
+                product_rows.setdefault(
+                    _int_or_none(stock_row.get("product_id")) or 0, []).append(stock_row)
         today = date.today()
         result = []
         for entry in raw:
@@ -1005,7 +1410,7 @@ class GrocyClient:
             total = float(entry.get("amount") or 0)
             # Float dust, or a parent product whose stock all sits in its
             # sub-products (they have rows of their own): nothing to list.
-            if dates == "breakdown" and total <= _DUST:
+            if dates in ("breakdown", "split") and total <= _DUST:
                 continue
             row = {
                 "product_id": pid,
@@ -1026,6 +1431,10 @@ class GrocyClient:
             }
             splits = by_location.get(pid)
             places = by_date.get(pid)
+            # Only a place the rows themselves name is split by date: a
+            # per-date row's buttons name its place, and stock filed under the
+            # default location for want of one (below) cannot be taken there.
+            named = {loc_id for loc_id in places or {} if loc_id.isdigit()}
             if places:
                 # Every place from its own rows. Stock kept in one place is
                 # filed where the plain reading files it: under the product's
@@ -1049,8 +1458,32 @@ class GrocyClient:
                     "amount_opened": opened.get(pid, 0.0),
                     "best_before_date": entry.get("best_before_date"),
                 }}
+            first = len(result)
             for loc_id, part in splits.items():
                 loc_name = locations.get(loc_id, "")
+                if dates == "split" and loc_id in named and len(places[loc_id]) > 1:
+                    # One row per date. A place holding a single date keeps
+                    # its one row: all of its stock has that date, so the
+                    # row's buttons that name the place (Use one, Mark all
+                    # consumed, Move) can only take that.
+                    for day, dated in places[loc_id].items():
+                        days_remaining, urgency = _urgency(day, today)
+                        result.append({
+                            **row,
+                            "added_date": dated["added"],
+                            "amount": dated["amount"],
+                            "best_before_date": day,
+                            "days_remaining": days_remaining,
+                            "urgency": urgency,
+                            "location_id": int(loc_id),
+                            "location_name": loc_name,
+                            "storage_bucket": classify_location(loc_name),
+                            "amount_opened": dated["amount_opened"],
+                            "by_date": True,
+                            "stock_entry_id": best_by_label_stock_id(
+                                product_rows.get(pid), loc_id, day or "none"),
+                        })
+                    continue
                 bbd = part["best_before_date"]
                 days_remaining, urgency = _urgency(bbd, today)
                 result.append({
@@ -1065,18 +1498,58 @@ class GrocyClient:
                     "amount_opened": part["amount_opened"],
                 })
                 # A row with one best-by date gets no list; its date says it all.
-                if places and len(places[loc_id]) > 1:
+                if dates == "breakdown" and places and len(places[loc_id]) > 1:
                     result[-1]["best_by_dates"] = best_by_breakdown(places[loc_id])
+            if dates == "split":
+                # Earliest date first (undated last), then by place.
+                result[first:] = sorted(result[first:], key=lambda r: (
+                    r["best_before_date"] is None, r["best_before_date"] or "",
+                    r["location_id"] or 0))
         return result
 
     async def edit_product(self, product_id: int,
                            category: str | None = None,
-                           best_before_date: str | None = None) -> dict:
-        """Update category (product group) and/or best-by date for every open stock entry."""
+                           best_before_date: str | None = None, *,
+                           from_location_id: int | None = None,
+                           from_best_before_date: str | None = None) -> dict:
+        """Update category (product group) and/or best-by date for every open stock entry.
+
+        ``from_location_id`` with ``from_best_before_date`` ("none" for stock
+        with no date) moves the date of one row's entries only, a per-date
+        row's or a plain row's whose place holds that single date, and says
+        how many were ``updated``; the category is the whole product's either
+        way. The row's entries are picked before anything is written,
+        so a row whose stock has gone answers kind "gone" and changes nothing.
+        """
+        scoped = from_location_id is not None or from_best_before_date is not None
+        if scoped and (not from_location_id or from_best_before_date is None):
+            # Half a scope must never fall back to dating every entry.
+            raise GrocyError("A per-date edit needs both the place and the best-by date.")
+        group_ids = None
+        if scoped and best_before_date is not None:
+            entries = await self._get(f"/stock/products/{product_id}/entries") or []
+            group_ids = [e.get("id") for e in entries if e.get("id") and in_best_by_group(
+                e, from_location_id, from_best_before_date)]
+            if not group_ids:
+                raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
+
         if category is not None:
             group_id = await self.ensure_product_group(category)
             await self._request("PUT", f"/objects/products/{product_id}",
                                 {"product_group_id": group_id})
+
+        if group_ids is not None:
+            # Each entry is read again just before its write (see
+            # _fresh_entry). One a merge took away, or one that has left the
+            # place or the date since, is no longer the row's to change.
+            updated = 0
+            for entry_id in group_ids:
+                entry = await self._fresh_entry(product_id, entry_id)
+                if (entry is not None
+                        and in_best_by_group(entry, from_location_id, from_best_before_date)
+                        and await self._write_best_by(entry, best_before_date)):
+                    updated += 1
+            return {"product_id": product_id, "updated": updated}
 
         if best_before_date is not None:
             # One target date for every entry, so a write can only merge a row
@@ -1086,6 +1559,8 @@ class GrocyClient:
             for entry_id in [e.get("id") for e in entries if e.get("id")]:
                 await self._set_entry_best_by(product_id, entry_id, best_before_date)
 
+        if scoped:
+            return {"product_id": product_id, "updated": 0}
         return {"product_id": product_id}
 
     async def _fresh_entry(self, product_id: int, entry_id) -> dict | None:
@@ -1238,13 +1713,16 @@ class GrocyClient:
 
     async def move_product(self, product_id: int, bucket: str,
                            propose_best_by=None,
-                           from_location_id: int | None = None) -> dict:
+                           from_location_id: int | None = None,
+                           from_best_before_date: str | None = None) -> dict:
         """Transfer all stock of a product to the location for `bucket` and
         make that the product's default location.
 
         ``from_location_id`` moves only the stock held at that one location
         (#73: a product kept in two places is listed once per place). The
         default location then changes only when no stock is left elsewhere.
+        With ``from_best_before_date`` too, only the stock with that best-by
+        date there moves: one per-date row (see _move_best_by_group).
 
         ``propose_best_by`` is an optional callable ``(old_best_by: date,
         from_bucket: str) -> date | None`` (see
@@ -1271,6 +1749,10 @@ class GrocyClient:
         to_name = location_for(bucket)
         if not to_name:
             raise GrocyError(f"Unknown storage bucket: {bucket}")
+        if from_best_before_date is not None:
+            return await self._move_best_by_group(
+                product_id, to_name, propose_best_by, from_location_id,
+                from_best_before_date)
         to_id = await self.ensure_location(to_name)
 
         locations = {}
@@ -1347,6 +1829,131 @@ class GrocyClient:
             "best_by_updates": best_by_updates,
             "new_best_by": min(u["new"] for u in best_by_updates) if best_by_updates else None,
             "best_by_change": change,
+        }
+
+    async def _move_best_by_group(self, product_id: int, to_name: str, propose_best_by,
+                                  from_location_id: int | None,
+                                  best_before_date: str) -> dict:
+        """move_product for one per-date row: only the stock with
+        ``best_before_date`` ("none" for stock with no date) at
+        ``from_location_id``.
+
+        Nothing is written, not even a new location, until a fresh read shows
+        that Grocy hands the whole row over one head at a time: each transfer
+        names the stock id of a row Grocy takes first for it
+        (best_by_group_head) and moves that row whole. A transfer never merges
+        rows, but a date write does, and it renames stock ids across the
+        product, so the plan is made again before every transfer, and a move
+        that stops part-way says how much was ``left_behind``.
+
+        The new best-by comes once from the row's date and the place it
+        leaves, and each arrival is re-dated before the next transfer. Left
+        to the end, the first write could merge a moved row with stock already
+        there that still carries the old date, and the next write would re-date
+        that stock too. When Grocy dated the arrival itself (its own freezer
+        rule), its date stands, as on any move, and ``best_by_updates`` lists
+        the dates Grocy holds.
+        """
+        if not from_location_id:
+            raise GrocyError("A per-date move needs the place the stock is in.")
+        from_id = int(from_location_id)
+        await self._refuse_tare_weight(product_id)
+        entries_path = f"/stock/products/{product_id}/entries"
+        entries = await self._get(entries_path) or []
+
+        def left_at_source(rows: list[dict]) -> float:
+            return sum(_amount(e) for e in rows
+                       if in_best_by_group(e, from_id, best_before_date))
+
+        total = left_at_source(entries)
+        if total <= _DUST:
+            raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
+        if best_by_group_reach(entries, from_id, best_before_date) < total - _DUST:
+            raise GrocyError("Grocy would move other stock with it, so nothing was moved.",
+                             kind="group")
+        to_id = await self.ensure_location(to_name)
+
+        old_iso = _token_date(best_before_date)
+        new_iso = None
+        if propose_best_by is not None and old_iso and to_id != from_id:
+            names = {str(loc["id"]): loc["name"]
+                     for loc in await self._cached_list("/objects/locations")}
+            proposed = propose_best_by(date.fromisoformat(old_iso),
+                                       classify_location(names.get(str(from_id), "")))
+            new_iso = proposed.isoformat() if proposed is not None else None
+
+        moved = 0.0
+        best_by_updates: list[dict] = []
+        reread = False
+        # Each pass moves one whole row, so this only caps a Grocy that never
+        # lets go of one.
+        for _ in range(len(entries) + 10):
+            left = left_at_source(entries)
+            if to_id == from_id or left <= _DUST:
+                break
+            head = best_by_group_head(entries, from_id, best_before_date)
+            if head is None or best_by_group_reach(
+                    entries, from_id, best_before_date) < left - _DUST:
+                break   # a merge since the last pass put other stock in the way
+            there = {str(e.get("id")) for e in entries if _location_id(e) == to_id}
+            try:
+                booked = await self._post(f"/stock/products/{product_id}/transfer", {
+                    "amount": _amount(head),
+                    "location_id_from": from_id,
+                    "location_id_to": to_id,
+                    "stock_entry_id": head["stock_id"],
+                })
+            except GrocyError as e:
+                if reread or not _nothing_booked(e):
+                    if moved > _DUST:
+                        break
+                    raise
+                reread = True
+                entries = await self._get(entries_path) or []
+                continue
+            arrived, strays = _best_by_arrivals(booked, from_id, best_before_date)
+            moved += sum(_amount(r) for r in arrived)
+            entries = await self._get(entries_path) or []
+            grocy_dated = [r for r in arrived if (r.get("best_before_date") or None) != old_iso]
+            if grocy_dated:
+                best_by_updates += [{"old": old_iso, "new": r.get("best_before_date")}
+                                    for r in grocy_dated]
+            elif new_iso and arrived:
+                # The rows that just arrived: the head itself, or the part of
+                # it a partial transfer left as a new row there.
+                stock_ids = {r.get("stock_id") for r in arrived}
+                landed = [e for e in entries if _location_id(e) == to_id
+                          and str(e.get("id")) not in there
+                          and e.get("stock_id") in stock_ids
+                          and (e.get("best_before_date") or None) == old_iso]
+                for e in landed:
+                    if await self._set_entry_best_by(product_id, e.get("id"), new_iso):
+                        best_by_updates.append({"old": old_iso, "new": new_iso})
+                if landed:
+                    entries = await self._get(entries_path) or []
+            if strays or not arrived:
+                break   # Grocy moved other stock as well, or nothing
+        left_behind = 0.0 if to_id == from_id else left_at_source(entries)
+
+        # As for one place's whole stock, the default location follows once
+        # none of the product is left anywhere else.
+        if moved > _DUST and not any(_movable(e, to_id) for e in entries):
+            await self._request("PUT", f"/objects/products/{product_id}",
+                                {"location_id": to_id})
+
+        dated = [u for u in best_by_updates if u["old"] and u["new"]]
+        change = None
+        if dated:
+            change = "extended" if dated[0]["new"] > dated[0]["old"] else "shortened"
+        new_dates = [u["new"] for u in best_by_updates if u["new"]]
+        return {
+            "product_id": product_id,
+            "moved_amount": moved,
+            "location_id": to_id,
+            "best_by_updates": best_by_updates,
+            "new_best_by": min(new_dates) if new_dates else None,
+            "best_by_change": change,
+            "left_behind": left_behind,
         }
 
     async def product_id_by_name(self, name: str) -> int | None:

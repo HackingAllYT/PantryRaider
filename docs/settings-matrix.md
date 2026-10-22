@@ -135,6 +135,19 @@ admin password with a generated one, stored in `grocy_admin_password` and
 revealed from the Inventory pane if you ever want to sign in to Grocy
 directly.
 
+## Inventory page
+
+`inventory_rows_per_best_by` is on by default: a product with more than one
+best-by date in one place gets a row on the Inventory page for each date, and
+that row's buttons only touch the items with that date. Off, each product gets
+one row per place, and a short line under its name lists how many items have
+each date. The switch is in Settings, Inventory on a main install. A Pi Remote
+follows its server's choice.
+
+| Setting | Secret | Server | Pi Hosted | Pi Remote |
+| --- | --- | --- | --- | --- |
+| `inventory_rows_per_best_by` | | Editable (on by default) | Editable (on by default) | Inherited (read-only) |
+
 ## Mealie (optional connector)
 
 Recipes, the meal plan, and the shopping list are built into Pantry Raider;

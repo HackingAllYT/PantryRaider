@@ -147,6 +147,10 @@ PINNED = {
             # toggle and the anonymous sharing opt-in. Main installs only.
             'share_expiry_learning', 'share_barcode_corrections', 'use_community_barcodes',
             'use_community_expiry', 'use_kitchen_history',
+            # Added after the pin: the Inventory page panel on the Inventory
+            # pane, one row per best-by date (public issue #73). Main installs
+            # only.
+            'inventory_rows_per_best_by',
             'scan_cidr', 'scanner-test-input', 'scanner_type',
             'scanner_uart_baud', 'scanner_uart_enabled', 'scanner_uart_port',
             'screensaver_all_clients',
@@ -409,6 +413,10 @@ PINNED = {
             # so it carries the same controls.
             'share_expiry_learning', 'share_barcode_corrections', 'use_community_barcodes',
             'use_community_expiry', 'use_kitchen_history',
+            # Added after the pin: the Inventory page panel on the Inventory
+            # pane, one row per best-by date (public issue #73). Pi Hosted is
+            # a main server, so it carries the switch too.
+            'inventory_rows_per_best_by',
             'scan_cidr',
             'scanner-test-input', 'scanner_type',
             'scanner_uart_baud', 'scanner_uart_enabled', 'scanner_uart_port',
@@ -929,6 +937,36 @@ def test_confirm_new_password_renders_in_change_block(client, monkeypatch):
     ap = block[1].index('id="auth_password"')
     apc = block[1].index('id="auth_password_confirm"')
     assert ap < apc, "confirm field should follow the new-password field"
+
+
+def test_inventory_pane_shows_the_one_row_per_best_by_date_switch(client, monkeypatch):
+    """The Inventory pane of a main install carries the One row per best-by date
+    switch (public issue #73), showing the saved choice, with a save button of
+    its own and a mention in the pane intro, the text Settings search reads. A
+    Pi Remote has no Inventory pane in its menu and follows its server, so the
+    switch is not drawn there."""
+    def inventory_pane(rows_per_date):
+        monkeypatch.setattr(settings, "inventory_rows_per_best_by", rows_per_date)
+        html = _render(client, monkeypatch, mode="server", is_pi=False, configured=True)
+        return html.split('id="pane-inventory"', 1)[1].split('id="pane-', 1)[0]
+
+    pane = inventory_pane(True)
+    switch = re.search(r'<input type="checkbox" role="switch" id="inventory_rows_per_best_by"[^>]*>',
+                       pane)
+    assert switch, "switch missing from the Inventory pane"
+    assert 'aria-label="Show one row per best-by date"' in switch.group(0)
+    assert " checked" in switch.group(0)
+    assert "One row per best-by date" in pane
+    assert 'data-on-click="savePaneInventoryRows(this)"' in pane
+    assert 'id="inventory-rows-save-result"' in pane
+    intro = pane.split('class="pane-intro">', 1)[1].split("</p>", 1)[0]
+    assert "best-by dates" in intro
+
+    switch = re.search(r'<input[^>]*id="inventory_rows_per_best_by"[^>]*>', inventory_pane(False))
+    assert switch and " checked" not in switch.group(0)
+
+    remote = _render(client, monkeypatch, mode="pi_remote", is_pi=True, configured=True)
+    assert 'id="inventory_rows_per_best_by"' not in remote
 
 
 def test_kiosk_auto_home_is_saveable_and_accepted():

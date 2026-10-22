@@ -103,8 +103,11 @@ def test_a_category_change_alone_sends_no_best_by_date(inventory_page):
     _open_edit(page, "refrigerated")
     page.select_option("#editCategory", "Snacks")
     body = _save(page)
-    # Null leaves every date as it is, so the freezer packs keep theirs.
-    assert body == {"category": "Snacks", "best_before_date": None}
+    # Null leaves every date as it is, so the freezer packs keep theirs. The
+    # row names its place and its one date, so a changed date would reach the
+    # fridge pack alone.
+    assert body == {"category": "Snacks", "best_before_date": None,
+                    "from_location_id": 1, "from_best_before_date": FRIDGE_BEST_BY}
 
 
 def test_a_changed_best_by_date_is_sent(inventory_page):
@@ -113,7 +116,8 @@ def test_a_changed_best_by_date_is_sent(inventory_page):
     _open_edit(page, "refrigerated")
     page.fill("#editBestBy", new_date)
     body = _save(page)
-    assert body == {"category": "Dairy", "best_before_date": new_date}
+    assert body == {"category": "Dairy", "best_before_date": new_date,
+                    "from_location_id": 1, "from_best_before_date": FRIDGE_BEST_BY}
 
 
 def test_save_can_be_tried_again_after_it_failed(inventory_page):
@@ -138,4 +142,5 @@ def test_save_can_be_tried_again_after_it_failed(inventory_page):
     page.wait_for_function(
         "() => document.getElementById('toastMsg').textContent.includes('Item updated')")
     assert [body for _url, body in page.edits] == \
-        [{"category": "Snacks", "best_before_date": None}] * 2
+        [{"category": "Snacks", "best_before_date": None,
+          "from_location_id": 1, "from_best_before_date": FRIDGE_BEST_BY}] * 2

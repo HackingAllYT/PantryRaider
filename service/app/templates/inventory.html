@@ -241,13 +241,16 @@
       <div class="modal-body">
         <div class="mb-3">
           <label class="form-label fw-semibold" for="editCategory">Category</label>
-          <select class="form-select" id="editCategory">
+          <select class="form-select" id="editCategory" aria-describedby="editCategoryHelp">
             <option value="">(unchanged)</option>
             <option>Poultry</option><option>Meat</option><option>Seafood</option>
             <option>Dairy</option><option>Produce</option><option>Grains</option>
             <option>Condiments</option><option>Beverages</option><option>Snacks</option>
             <option>Frozen</option><option>Canned</option><option>Other</option>
           </select>
+          {# A category belongs to the Grocy product, not to its stock, so it is
+             the same on every row of the product, one per place or date. #}
+          <div class="form-text" id="editCategoryHelp">Applies to the whole product, on every row.</div>
         </div>
         <div class="mb-1">
           <label class="form-label fw-semibold" for="editBestBy">Best By Date</label>
