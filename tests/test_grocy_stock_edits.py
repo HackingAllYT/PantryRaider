@@ -386,8 +386,10 @@ def test_a_row_already_on_the_new_date_still_gets_its_own_date(grocy):
 
 
 def test_an_opened_row_and_its_unopened_twin_both_move_with_new_dates(grocy):
-    # Opening part of a row splits it: both halves keep the stock id, and
-    # Grocy hands out the opened one first.
+    # Two rows sharing one stock id, the opened one handed out first. Grocy
+    # 4.3 and older split a part-opened row this way; 4.4 and later give the
+    # unopened rest a stock id of its own, but a partial transfer or a merge
+    # can still leave two rows sharing one.
     grocy.add(1, _d(4), stock_id=SHARED_STOCK_ID)
     opened = grocy.add(1, _d(2), stock_id=SHARED_STOCK_ID)
     opened["open"] = 1

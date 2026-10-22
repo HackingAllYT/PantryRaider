@@ -3238,7 +3238,8 @@ configure_streamdeck() {
     warn "streamdeck/requirements.txt not found; installing the inline pin list"
     run "$venv_dir/bin/pip" install --quiet \
       "streamdeck>=0.9.8,<1" \
-      "Pillow>=12.3.0,<13" \
+      "Pillow>=13.0.0,<14; python_version >= '3.11'" \
+      "Pillow>=12.3.0,<13; python_version < '3.11'" \
       "httpx>=0.27.0,<1" \
       "websockets>=12.0,<18" \
       "tomli>=2,<3; python_version < '3.11'"

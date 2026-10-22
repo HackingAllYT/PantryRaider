@@ -22,7 +22,7 @@ import html
 import json
 import re
 
-from .current_recipe import _positive_number, mealie_servings_text
+from .current_recipe import _positive_number, mealie_servings_text, with_mealie_time_text
 
 
 def parse_recipe_file(filename: str, raw: bytes) -> dict:
@@ -49,6 +49,8 @@ def parse_recipe_file(filename: str, raw: bytes) -> dict:
     if recipe is None:
         raise ValueError("Could not find a recipe in this file. Supported formats: "
                          "generic recipe JSON, schema.org Recipe JSON-LD, and Mealie export JSON.")
+    # A Mealie 3.29 export keeps its times in seconds only.
+    recipe = with_mealie_time_text(dict(recipe))
 
     name = _plain(_first_str(recipe.get("name"), recipe.get("title")))
     if not name:

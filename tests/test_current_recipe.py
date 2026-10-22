@@ -194,6 +194,40 @@ def test_mealie_servings_text_reads_every_yield_field():
         {"recipeYield": "", "recipeServings": 0, "recipeYieldQuantity": None}) == ""
 
 
+def test_duration_text_reads_seconds_as_words():
+    assert current_recipe.duration_text(5400) == "1 hour 30 minutes"
+    assert current_recipe.duration_text(1200) == "20 minutes"
+    assert current_recipe.duration_text(3600) == "1 hour"
+    assert current_recipe.duration_text(60) == "1 minute"
+    assert current_recipe.duration_text(30) == "1 minute"
+    assert current_recipe.duration_text(90000) == "1 day 1 hour"
+    assert current_recipe.duration_text(4200.0) == "1 hour 10 minutes"
+    for nothing in (None, 0, -60, "", "soon", float("nan"), True):
+        assert current_recipe.duration_text(nothing) == ""
+
+
+def test_mealie_times_kept_only_in_seconds_get_their_text_back():
+    # Mealie 3.29 moves a time it can read into seconds and clears the text,
+    # which is all the rest of the app reads.
+    detail = current_recipe.with_mealie_time_text({
+        "totalTime": None, "prepTime": "", "performTime": None,
+        "totalTimeSeconds": 5400, "prepTimeSeconds": 1200, "performTimeSeconds": 4200,
+    })
+    assert detail["totalTime"] == "1 hour 30 minutes"
+    assert detail["prepTime"] == "20 minutes"
+    assert detail["performTime"] == "1 hour 10 minutes"
+    assert current_recipe.from_mealie_detail(detail)["total_time"] == "1 hour 30 minutes"
+
+
+def test_mealie_time_text_already_there_wins():
+    detail = current_recipe.with_mealie_time_text({
+        "totalTime": "About an hour", "totalTimeSeconds": 3000,
+        "prepTime": None, "prepTimeSeconds": None})
+    assert detail["totalTime"] == "About an hour"
+    assert detail["prepTime"] is None
+    assert current_recipe.with_mealie_time_text(None) is None
+
+
 def test_print_quick_facts_show_real_mealie_servings():
     from app.services import print_document
     assert print_document.format_quick_facts(_SCRAPED) == (

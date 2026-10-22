@@ -31,6 +31,19 @@ list Add to cart builds. Only the conversions you have defined in Grocy are
 used, per product or global, never a guess; ingredients without amounts, and
 products without conversions, match by name as before.
 
+Names match the way a cook reads them. The ingredient and the item in stock
+have to be the same food, so baking powder never counts your baking soda,
+chicken stock never counts your chicken breasts, and milk never counts your
+coconut milk. Variety words still match ("yellow onion" finds your onions,
+"unsalted butter" finds your butter), "butter or margarine" is happy with
+either, and prep notes after a comma ("softened", "cut into pieces") are
+ignored. An ingredient also finds your stock under its other name: scallions
+and green onions, garbanzo beans and chickpeas, courgette and zucchini,
+double cream and heavy cream, fresh coriander and cilantro, minced beef and
+ground beef, and about thirty other US and UK pairs. The quick view's chips
+and Add to cart use the same matching, so you are not told to buy something
+you already have under another name.
+
 ## The Cook wizard
 
 Not sure what you want yet? The Cook page has a **Launch cook wizard** button

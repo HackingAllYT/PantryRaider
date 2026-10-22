@@ -278,6 +278,36 @@ async def test_empty_and_json_answers_still_parse(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_recipes_from_mealie_329_keep_their_times(monkeypatch):
+    """Mealie 3.29's upgrade moves every recipe time it can read into seconds
+    and clears the text; the client fills the text back in for the app."""
+    monkeypatch.setattr(settings, "mealie_base_url", "http://mealie.test")
+    monkeypatch.setattr(settings, "mealie_api_key", "t")
+    stew = {"slug": "stew", "name": "Stew", "totalTime": None, "prepTime": None,
+            "performTime": None, "totalTimeSeconds": 5400, "prepTimeSeconds": 1200,
+            "performTimeSeconds": 4200}
+
+    def handler(request):
+        if request.url.path == "/api/recipes":
+            return httpx.Response(200, json={"items": [dict(stew)]})
+        if request.url.path == "/api/recipes/stew":
+            return httpx.Response(200, json=dict(stew))
+        return httpx.Response(404, json={"detail": "nope"})
+
+    original = m._client
+    m._client = _mock_client(handler)
+    try:
+        listed = (await MealieClient().search_recipes())[0]
+        detail = await MealieClient().get_recipe("stew")
+    finally:
+        m._client = original
+        m.reset_cache()
+    assert listed["totalTime"] == detail["totalTime"] == "1 hour 30 minutes"
+    assert detail["prepTime"] == "20 minutes"
+    assert detail["performTime"] == "1 hour 10 minutes"
+
+
+@pytest.mark.anyio
 async def test_new_food_shows_in_typeahead_immediately(monkeypatch):
     """A food created while saving a parsed ingredient is offered by the
     shopping typeahead straight away, not after the catalog TTL (MEALIE-6)."""

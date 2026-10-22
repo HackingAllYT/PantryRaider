@@ -90,11 +90,39 @@ STOCK = [
     }
     for i, (name, qty, unit, loc, grp, days) in enumerate(_STOCK_ROWS)
 ]
-STOCK_LOG = [
-    {"product_id": i + 1,
-     "row_created_timestamp": (datetime.now() - timedelta(days=i % 9)).strftime("%Y-%m-%d %H:%M:%S")}
-    for i in range(len(_STOCK_ROWS))
-]
+# A product bought more than once: name -> (amount, days-until-best-by) of the
+# later purchase, taken out of its _STOCK_ROWS amount. /stock keeps answering
+# with the total and the earliest date, as Grocy does, while the raw rows
+# carry each purchase, so the Inventory page gives each date a row.
+_LATER_PURCHASES = {"Greek Yogurt": (2, 21)}
+
+
+def _stock_rows() -> list[dict]:
+    """The raw /objects/stock rows: one per purchase, the way Grocy keeps them."""
+    rows = []
+    now = datetime.now()
+    for i, (name, qty, _unit, loc, _grp, days) in enumerate(_STOCK_ROWS):
+        bought = now - timedelta(days=i % 9)
+        later = _LATER_PURCHASES.get(name)
+        parts = [(qty, days, bought)]
+        if later:
+            parts = [(qty - later[0], days, bought), (later[0], later[1], now)]
+        for amount, until, when in parts:
+            rows.append({
+                "id": len(rows) + 1,
+                "product_id": i + 1,
+                "amount": amount,
+                "best_before_date": _d(until),
+                "location_id": loc,
+                "open": 0,
+                "stock_id": f"mock{len(rows) + 1:04d}",
+                "purchased_date": when.date().isoformat(),
+                "row_created_timestamp": when.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+    return rows
+
+
+STOCK_ROWS = _stock_rows()
 
 # Recipes whose ingredients token-match the stock above so the Cook page fills
 # all three tiers (ready / with staples / worth shopping for).
@@ -229,7 +257,7 @@ class MockHandler(BaseHTTPRequestHandler):
             "/api/stock": STOCK,
             "/api/objects/locations": LOCATIONS,
             "/api/objects/product_groups": GROUPS,
-            "/api/objects/stock": STOCK_LOG,
+            "/api/objects/stock": STOCK_ROWS,
             "/api/objects/quantity_units": [],
             "/api/objects/products": [],
             "/api/objects/shopping_lists": [{"id": 1, "name": "Shopping list"}],

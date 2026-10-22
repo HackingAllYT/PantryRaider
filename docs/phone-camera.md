@@ -28,11 +28,14 @@ in the house stays in step.
 Under **Stock up** (or any of the other modes), the **Barcode** tab gives you
 two ways to scan.
 
-**Start Camera** opens a live view: hold a barcode in the frame and it reads it
-as soon as it focuses. It handles the usual grocery codes (EAN-13, EAN-8,
-UPC-A, UPC-E) plus Code 128, Code 39, and QR codes. Phones cannot focus much
-closer than about four inches, so hold the package a little further back than
-feels natural and let it settle.
+**Start Camera** opens a full-screen live view that stays open between scans,
+so you can work through a pile of groceries without tapping Start for each
+one. Hold a barcode in the frame and it reads it as soon as it focuses. A
+barcode held in view counts once; move it away and back to scan the same item
+again. Close the camera with the cross when you are done. It handles the usual
+grocery codes (EAN-13, EAN-8, UPC-A, UPC-E) plus Code 128, Code 39, and QR
+codes. Phones cannot focus much closer than about four inches, so hold the
+package a little further back than feels natural and let it settle.
 
 A recognized barcode gives a green pulse and a 150 ms vibration where supported.
 The scanner has separate sound and vibration toggles: sound starts off and
@@ -48,10 +51,12 @@ is the one to use if Start Camera is not offered (see below).
 
 There is also a box to type a barcode by hand when the label is scuffed.
 
-Every scan looks the product up in the community Open Food Facts database to
-turn the number into a name. That lookup needs the internet; the scan itself
-does not. If you are offline, type the name in and everything else works the
-same.
+Every scan turns the number into a name by checking your own Grocy products
+first, then the [barcode fixes](community-barcodes.md) other Pantry Raider
+kitchens agreed on (a copy ships with each release), and then the community
+Open Food Facts database. Only the Open Food Facts lookup needs the internet;
+the scan itself does not. If you are offline and a product is new to you,
+type the name in and everything else works the same.
 
 ## Photographing groceries and receipts
 

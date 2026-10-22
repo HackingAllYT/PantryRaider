@@ -3706,8 +3706,12 @@ def test_streamdeck_pillow_floor():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     req = (root / "streamdeck" / "requirements.txt").read_text()
-    assert "Pillow>=12.3.0,<13" in req
-    controller = (root / "streamdeck" / "foodassistant_streamdeck" / "controller.py").read_text()
+    # Pillow 13 carries the decoder fixes and needs Python 3.11; Python 3.10
+    # stays on 12.x. The service pins 13 too, and on a Pi Remote both install
+    # into one venv, so a ceiling below 13 here would undo the service's pin.
+    assert "Pillow>=13.0.0,<14; python_version >= '3.11'" in req
+    assert "Pillow>=12.3.0,<13; python_version < '3.11'" in req
+    controller =(root / "streamdeck" / "foodassistant_streamdeck" / "controller.py").read_text()
     assert 'Image.open(_io.BytesIO(snap), formats=("JPEG", "PNG"))' in controller
 
 

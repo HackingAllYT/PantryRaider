@@ -243,6 +243,20 @@ def test_mealie_export_carries_prep_cook_time_and_tags():
     assert recipe["tags"] == ["Dinner", "Spicy"]
 
 
+def test_a_mealie_329_export_with_times_in_seconds_keeps_them():
+    # Mealie 3.29 exports a time it could read as seconds, with no text.
+    recipe = parse_recipe_file("mealie.json", _b({
+        "name": "Braised Short Ribs",
+        "totalTime": None, "prepTime": None, "performTime": None,
+        "totalTimeSeconds": 12600, "prepTimeSeconds": 1800, "performTimeSeconds": 10800,
+        "recipeIngredient": [{"note": "2 lb short ribs"}],
+        "recipeInstructions": [{"text": "Braise."}],
+    }))
+    assert recipe["total_time"] == "3 hours 30 minutes"
+    assert recipe["prep_time"] == "30 minutes"
+    assert recipe["cook_time"] == "3 hours"
+
+
 def test_generic_json_snake_case_times_and_plain_tags():
     recipe = parse_recipe_file("x.json", _b({
         "name": "Toast", "prep_time": "1 minute", "cook_time": "3 minutes",

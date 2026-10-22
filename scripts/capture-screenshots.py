@@ -52,6 +52,12 @@ def main() -> int:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(**launch_kwargs)
             page = browser.new_page(viewport=VIEWPORT)
+            # The mock kitchen has no password, so every page would carry the
+            # "No password" notice that an install with one never shows.
+            # Dismiss it the way its own close button does.
+            page.add_init_script(
+                "try { localStorage.setItem('prOpenNoticeUntil', String(Date.now() + 864e5)); }"
+                " catch (e) {}")
             for path, fname, ready in shots:
                 # "load", not "networkidle": the /events/poll long-poll every
                 # page keeps open means the network never goes idle.

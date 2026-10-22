@@ -5,7 +5,7 @@
              and the storage-cat-editor container + its classes are unchanged so
              the save path and category editor JS keep working. -->
         <div class="tab-pane fade" id="pane-inventory">
-          <p class="pane-intro">Where your stock lives: the Grocy backend and the storage buckets it's grouped into.</p>
+          <p class="pane-intro">Where your stock lives: the Grocy backend, the storage buckets it's grouped into, and how the Inventory page lists a product's best-by dates.</p>
 
           {% call panel('Grocy inventory backend',
                         'Grocy stores your stock, locations, and consumption history. Pantry Raider reads and updates it through its API.',
@@ -66,6 +66,24 @@
             <i class="bi bi-check-lg me-1"></i>Save Grocy
           </button>
           <div class="test-result mt-2 mb-3" id="grocy-save-result"></div>
+
+          {# How the Inventory page lists a product that has more than one
+             best-by date in one place. Main installs only: the Inventory pane
+             has no menu entry on a Pi Remote, which follows its server's
+             choice. #}
+          {% if not features.satellite %}
+          {% call panel('Inventory page', 'How the Inventory page lists your stock.') %}
+            {% call srow('One row per best-by date', 'The same on every device.',
+                         'On, a product with more than one best-by date in one place gets a row for each date, and that row\'s buttons only touch the items with that date. Off, each product gets one row per place, and a short line under its name lists how many items have each best-by date. A category change always applies to the whole product. Only the Inventory page changes.') %}
+              {{ toggle('inventory_rows_per_best_by', checked=s.inventory_rows_per_best_by, label='Show one row per best-by date') }}
+            {% endcall %}
+          {% endcall %}
+
+          <button type="button" class="btn btn-outline-info btn-sm" data-on-click="savePaneInventoryRows(this)">
+            <i class="bi bi-check-lg me-1"></i>Save Inventory page
+          </button>
+          <div class="test-result mt-2 mb-3" id="inventory-rows-save-result"></div>
+          {% endif %}
 
           {# Kitchen history (FoodAssistant-i9flm): learn spoilage and
              consumption from this install's own Grocy journal. Main installs

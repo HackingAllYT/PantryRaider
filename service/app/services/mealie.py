@@ -12,6 +12,7 @@ import httpx
 
 from ..config import settings
 from . import proxy_policy, upstream
+from .current_recipe import with_mealie_time_text
 from .ingredient_parse import build_recipe_ingredients
 
 
@@ -344,10 +345,10 @@ class MealieClient:
             "orderBy": "created_at",
             "orderDirection": "desc",
         })
-        return data.get("items", [])
+        return [with_mealie_time_text(r) for r in data.get("items", [])]
 
     async def get_recipe(self, slug: str) -> dict:
-        return await self._request("GET", f"/recipes/{slug}")
+        return with_mealie_time_text(await self._request("GET", f"/recipes/{slug}"))
 
     async def get_recipes_with_ingredients(self, limit: int = 200) -> list[dict]:
         """All recipes with their ingredient lists, cached for a few minutes.

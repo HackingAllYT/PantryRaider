@@ -363,6 +363,40 @@ def mealie_servings_text(detail: dict) -> str:
     return unit
 
 
+# Mealie 3.29 keeps a recipe time it can read as seconds (totalTimeSeconds and
+# the like) and clears the text, and its database upgrade moves every saved
+# recipe over the same way. Pantry Raider reads the text, so an empty text
+# field is filled back in from its seconds.
+_MEALIE_TIME_SECONDS = (("totalTime", "totalTimeSeconds"),
+                        ("prepTime", "prepTimeSeconds"),
+                        ("performTime", "performTimeSeconds"))
+
+
+def duration_text(seconds) -> str:
+    """Seconds as words, to the nearest minute: 5400 is "1 hour 30 minutes",
+    1200 is "20 minutes". "" when there is no time to show. Pure."""
+    n = _positive_number(seconds)
+    if n is None:
+        return ""
+    days, minutes = divmod(max(1, int(round(n / 60))), 1440)
+    hours, minutes = divmod(minutes, 60)
+    return " ".join(f"{v} {unit}{'' if v == 1 else 's'}"
+                    for v, unit in ((days, "day"), (hours, "hour"), (minutes, "minute"))
+                    if v)
+
+
+def with_mealie_time_text(detail: dict) -> dict:
+    """A Mealie recipe with each empty time text filled in from its seconds
+    (see _MEALIE_TIME_SECONDS). Changes ``detail`` in place and returns it."""
+    if isinstance(detail, dict):
+        for text_key, seconds_key in _MEALIE_TIME_SECONDS:
+            if not str(detail.get(text_key) or "").strip():
+                text = duration_text(detail.get(seconds_key))
+                if text:
+                    detail[text_key] = text
+    return detail
+
+
 def _mealie_serving_base(detail: dict) -> int:
     """The numeric serving base On the Line scales from: recipeServings, then
     recipeYieldQuantity, then the number inside recipeYield."""

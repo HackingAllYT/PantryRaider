@@ -152,8 +152,8 @@ unattended pull cannot move you onto a breaking release.
 |---------|-------|-----|------|
 | Pantry Raider | `ghcr.io/syracuse3dprintingorg/pantryraider` | `${PANTRYRAIDER_TAG}`, or the older `${FOODASSISTANT_TAG}` (default `latest`) | 9284 |
 | Grocy | `lscr.io/linuxserver/grocy` | `4.7.1` | 9383 |
-| Mealie | `ghcr.io/mealie-recipes/mealie` | `v3.28.0` | 9285 |
-| Ollama | `ollama/ollama` | `0.40.4` | 11434 (this device only) |
+| Mealie | `ghcr.io/mealie-recipes/mealie` | `v3.29.0` | 9285 |
+| Ollama | `ollama/ollama` | `0.40.5` | 11434 (this device only) |
 | Watchtower (server only) | `ghcr.io/nicholas-fedor/watchtower` | `1.23.1` | none |
 | Beszel hub and agent | `henrygd/beszel`, `henrygd/beszel-agent` | `0.21.0` (same tag for both) | 8090 |
 | CUPS (server compose) | `olbat/cupsd` | pinned by digest | none (a private network and a shared socket) |

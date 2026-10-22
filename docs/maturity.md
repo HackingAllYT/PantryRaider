@@ -29,9 +29,10 @@ releases ago.
 
 | Capability | Maturity | Notes |
 |---|---|---|
-| Inventory dashboard (Grocy) | Stable | The oldest and most exercised part of the app: storage panels, drag-and-drop moves, inline edits, expiry badges, search and a category filter. Grocy itself is the battle-tested backbone. |
+| Inventory dashboard (Grocy) | Stable | The oldest and most exercised part of the app: storage panels, drag-and-drop moves, inline edits, expiry badges, search and a category filter, and a row for each place and each best-by date. Grocy itself is the battle-tested backbone. |
 | Custom storage locations | Stable | Buckets beyond the four built-ins have been in since 0.1.0 and are widely used. |
 | Expiry defaults (rules table) | Stable | The editable best-by rules by product type; every scan path runs through them and they are covered by tests. |
+| Learning from your kitchen | Beta | Shorter best-by dates for products you keep throwing out (never longer, never for the freezer) and the Shopping page's Running low soon list, both worked out on your device from your own Grocy history. New in 0.21.120. |
 | Barcode lookup (Open Food Facts) | Stable | Camera, USB/wireless scanner, or manual entry, backed by Open Food Facts. Established and well tested; product data quality depends on the Open Food Facts catalog. |
 | Consume by barcode | Stable | Scanning to consume stock. An unrecorded barcode is linked to the matching product once you confirm the suggestion. Covered by tests. |
 | Recipe suggestions (what can I cook) | Stable | Ranking your recipes by in-stock coverage, with expiring items floated up. Long-standing; the staple-matching was refined in 0.7.0. |
@@ -50,6 +51,7 @@ releases ago.
 | Capability | Maturity | Notes |
 |---|---|---|
 | Manual entry and barcode scanning | Stable | Core intake paths, in since the first release and heavily tested. |
+| Community barcode fixes | Beta | Scans check the barcode fixes other kitchens agreed on before asking Open Food Facts, from a copy that ships with each release; sharing your own fixes is opt-in and needs a linked Forager account. New in 0.21.120. |
 | Scanner modes (stock / use / shop / audit) | Beta | One scanner context shared across every surface and Stream Deck. Solid and tested, but the shared-mode plumbing is newer than the scan itself. |
 | Pantry audit (stock count) | Beta | A count compared against Grocy stock, whole pantry by default or one location. Scanning never writes back; the opt-in Apply corrections step (0.18.x) sets counted items to the amounts you scanned, and only when you press it. |
 | Photo analysis (vision) | Beta | Extracting name, brand, quantity, and printed dates from a photo. Reliable with a good cloud model; quality drops with smaller local models. Requires an AI provider. |

@@ -10,6 +10,22 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.128] - 2026-10-22
+
+### Added
+- **Each best-by date gets its own Inventory row.** A product you bought on different days showed one row with only its earliest date, so 2 coconut yogurts due in 3 days and a new pack of 8 due in a month looked like 10 yogurts all due in 3 days. Now each date in each place gets its own row with its own amount, opened count and expiry badge, and Use one, Mark all consumed, Mark one opened, Move, Edit and Print label on that row only touch the stock with that date. Once in a while Grocy would take other stock first, such as an opened one with another date; the button then says why in a short note and nothing changes. A place where everything has the same date keeps its one row. It is on by default. Turn off One row per best-by date in Settings, Inventory to get one row per place again, with a short line under the name listing the dates, such as "2 by Oct 24 · 8 by Nov 20". Kitchen screens set up as Pi Remotes follow the main server's choice. Thanks to @HackingAllYT for the idea and for building it.
+
+### Security
+- **Security updates for certificates, PDFs and images.** Pantry Raider and Forager no longer trust a certificate authority whose keys were exposed, so nobody holding those keys can pose as an AI provider or as Forager when the app connects to them. The PDF reader used for recipe imports and the image library used for labels and photos are updated to releases that fix problems with specially crafted files.
+
+### Changed
+- **New compose files bring Mealie 3.29.0 and Ollama 0.40.5.** An install you already have keeps the versions in its compose file until you download the new one. Mealie upgrades its database the first time 3.29.0 starts and cannot go back on that data, so back up the mealie data folder before you move and keep the copy until the new version works.
+
+### Fixed
+- **Changing a product's category no longer resets its best-by dates.** Saving the Edit window with only a new category used to set every stock entry of the product to the date the window showed, so the product's other dates were lost. The window now opens with the clicked row's own date and only sends a date you changed, and with One row per best-by date on, a date changed on a row changes only that row's stock. Thanks to @HackingAllYT for the fix.
+- **Stock that never expires says No expiry.** Its badge on the Inventory page used to show a day count in the hundreds of thousands. Thanks to @HackingAllYT for the fix.
+- **Recipe times stay put on Mealie 3.29.** The first time Mealie 3.29 starts, it stores every prep, cook and total time it can read as a number and clears the text Pantry Raider showed, so those times went blank on the Recipes, Cook and On the Line pages and on printouts. Pantry Raider now reads the new numbers, so your recipes keep their times, and a Mealie export from 3.29 imports with its times too.
+
 ## [0.21.120] - 2026-10-21
 
 ### Added

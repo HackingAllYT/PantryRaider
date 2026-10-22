@@ -116,7 +116,7 @@ services:
   # under User Profile then API Tokens, and paste it into the Pantry Raider
   # setup page along with the address http://YOUR-UNRAID-IP:9285 .
   # mealie:
-  #   image: ghcr.io/mealie-recipes/mealie:v3.28.0   # pinned; matches the project compose
+  #   image: ghcr.io/mealie-recipes/mealie:v3.29.0   # pinned; matches the project compose
   #   container_name: pantryraider-mealie
   #   environment:
   #     - TZ=${TZ:-America/New_York}

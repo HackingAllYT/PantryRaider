@@ -9,9 +9,10 @@ What Pantry Raider adds on top of Grocy:
 
 - **AI photo import.** Photograph a pile of groceries and queue them all for
   review at once, without typing.
-- **Barcode scanning with LLM enrichment.** Scan by camera, USB scanner, or
-  manual entry; Open Food Facts provides product data and an optional LLM pass
-  cleans up messy names.
+- **Barcode scanning with LLM enrichment.** Scan by phone camera, USB
+  scanner, or manual entry. Products you set up in Grocy and barcode fixes
+  other kitchens agreed on come first, Open Food Facts covers the rest, and an
+  optional LLM pass cleans up messy names.
 - **Kitchen kiosk and Stream Deck.** A dedicated countertop control surface
   with a Glance home screen that builds itself from your pages, plus an
   optional custom Start Page that works like an on-screen Stream Deck.

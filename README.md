@@ -31,7 +31,7 @@ Pantry Raider is source-available under the [PolyForm Noncommercial License 1.0.
 
 ![Inventory dashboard showing four storage panels with drag-and-drop](docs/screenshots/inventory.png)
 
-*Inventory dashboard: four storage panels (Refrigerated, Frozen, Room Temp, Pantry) with drag-and-drop moves, inline edits, and expiry badges.*
+*Inventory dashboard: four storage panels (Refrigerated, Frozen, Room Temp, Pantry) with search, drag-and-drop moves, inline edits, and a row with its own expiry badge for each best-by date.*
 
 ---
 
@@ -59,14 +59,14 @@ All AI features are optional. You can run Pantry Raider without any AI provider 
 
 ## Features
 
-- **Inventory dashboard**: panels for Refrigerated, Frozen, Room Temp, Pantry (plus custom storage locations you define), with drag-and-drop moves, inline edits, sorting, and a search box and category filter that narrow every panel as you type
+- **Inventory dashboard**: panels for Refrigerated, Frozen, Room Temp, Pantry (plus custom storage locations you define), with drag-and-drop moves, inline edits, sorting, and a search box and category filter that narrow every panel as you type; a product kept in two places, or bought on different days, gets a row for each place and each best-by date, and Use one, Mark one opened, Move and Edit on a row act only on that row's stock
 - **Photo analysis**: photograph a food item and a vision model extracts name, brand, quantity, and any printed best-by date
 - **Receipt import**: photograph a grocery receipt and every food line item is extracted and queued for review
 - **Receipt prices**: photograph a receipt from the Shopping page and the prices you actually paid are matched to your pantry items and recorded on each product's newest stock entry in Grocy, so price history reflects real prices; you review the pairings before anything is written, and the photo is read in the background so you can leave the page
-- **Barcode lookup**: scan barcodes via camera, a USB/wireless scanner, or manual entry; backed by Open Food Facts with optional AI cleanup for messy product names
-- **Expiry defaults**: an editable rules table fills in best-by dates automatically based on product type; all values are overridable before import
+- **Barcode lookup**: scan barcodes with a full-screen phone camera scanner that keeps scanning from one item to the next, a USB/wireless scanner, or manual entry; products you set up in Grocy come in with your own names and units, then barcode fixes other kitchens agreed on (a copy ships with every release, and sharing your own is opt-in), then Open Food Facts with optional AI cleanup for messy product names
+- **Expiry defaults**: an editable rules table fills in best-by dates automatically based on product type; all values are overridable before import, and a product you keep throwing out gets shorter dates on its own (learned on your device, never longer, never for the freezer)
 - **Expiring list and waste tracking**: an urgency-sorted Expiring page with a sniff test that keeps still-good food 1, 3, or 5 more days (never offered on hard expiration dates), a toss button that records spoiled food as waste rather than eaten, a Waste summary of your most-tossed items, and a one-tap Opened button on the Inventory dashboard that switches an item to its after-opening shelf life
-- **Recipe suggestions**: "What Can I Cook?" ranks your recipes by how much of them you already have in stock; items expiring soon float to the top
+- **Recipe suggestions**: "What Can I Cook?" ranks your recipes by how much of them you already have in stock; items expiring soon float to the top, and an ingredient matches your stock under its other name (scallions and green onions, courgette and zucchini)
 - **Recipe import**: import from any webpage, photograph a recipe card or handwritten note, load a recipe file (generic recipe JSON, a schema.org Recipe JSON-LD file, or a Mealie export), browse TheMealDB, or have the AI write a recipe from scratch
 - **On the Line (Current Recipe)**: set any recipe (from your library, an import, or AI-generated) as the active one with a "Cook" button, and the app holds it server-side with servings scaling and step-by-step instructions; step durations like "simmer 20 minutes" become ready-to-start named timers shared across surfaces, surfaced in a floating timer window and on the Stream Deck's timer keys
 - **Manage**: one page for the scanner with four mode tiles (Stock up, Use stock, Shopping list, Audit stock) that are the shared scanner mode itself, so picking a mode switches every scanner and Stream Deck mode key at once; consuming by barcode links unrecorded barcodes to their product on the fly, and an Open on phone button shows a QR code that jumps the page to your phone's camera and keyboard
@@ -78,8 +78,8 @@ All AI features are optional. You can run Pantry Raider without any AI provider 
 - **Pantry audit**: a stock count where scanning never changes your stock, reached from the Manage page. Count the whole pantry (the default) or lock the count to one storage location; each scan is compared against Grocy's recorded stock so missing and unexpected items stand out. When a count turns up differences, an opt-in Apply corrections button sets each counted item's stock to the amount you actually scanned, leaving unscanned items untouched
 - **Nutrition tracker**: log what you eat with calories and macros (protein, carbs, fat) on a Nutrition page under Kitchen Guide, with daily and recent-day totals; an optional AI estimate fills in macros from a food name when a provider is configured, and using an item up by scan offers a one-tap Log as eaten when the product's nutrition facts are on record
 - **Weather page**: a full forecast page on the kiosk display, opened by a Stream Deck weather or forecast key and reachable from the nav. Forecasts come from Open-Meteo (free, no key) with wttr.in as a fallback, using the same location and units as the Stream Deck weather widget
-- **Unit converter and kitchen guide**: a Convert page with a measurement cheat sheet, a calculator, and your own saved conversions, plus a Kitchen Guide reference page, grouped together under Kitchen Guide
-- **Meal planning and shopping lists**: built in, with a week view, a shopping list with check-off kept in Grocy next to your inventory, and inventory-aware recipe suggestions; an existing [Mealie](https://mealie.io) can be connected and copied over
+- **Unit converter and kitchen guide**: a Convert page with a measurement cheat sheet, a calculator, and your own saved conversions, plus a Kitchen Guide reference page, grouped together under Kitchen Guide; choose Metric in Settings to lead with grams, milliliters and Celsius
+- **Meal planning and shopping lists**: built in, with a week view, a shopping list with check-off kept in Grocy next to your inventory, a Running low soon list of what you will probably use up within a week, and inventory-aware recipe suggestions; an existing [Mealie](https://mealie.io) can be connected and copied over
 - **Custom storage locations**: add buckets beyond the four built-ins (Wine Cellar, Garage Fridge, etc.) from the setup wizard
 - **Two-level navigation, fully customizable**: a short top menu of areas (Glance, Inventory, Manage, Review, Cook, Shopping, Kitchen Guide, Time & Temp, Home Hub) with each area's sub-pages as full-width tabs in the header; reorder or hide pages, add your own entries (label, icon, and a local or external URL), and regroup pages under different parents, all from Settings > Appearance; navigation layout is per-device so each kiosk can arrange its own menu
 - **Glance home screen**: the app opens on an at-a-glance home that builds itself from your navigation, big buttons to your main pages plus live-count pills for items to review, on-screen alerts, and food expiring this week; prefer a hand-arranged launcher? Switch the home style to the custom Start Page grid in Settings
@@ -330,8 +330,8 @@ Every bundled service other than Pantry Raider itself (Grocy, Mealie, Ollama, th
 | Service | Image | Tag | Notes |
 |---------|-------|-----|-------|
 | Grocy   | `lscr.io/linuxserver/grocy` | `4.7.1` | Upgrades its database on first start; see the Grocy note below |
-| Mealie  | `ghcr.io/mealie-recipes/mealie` | `v3.28.0` | Upgrades its database on first start |
-| Ollama  | `ollama/ollama` | `0.40.4` | Answers only on this machine. Converts downloaded models on first use, so an older version needs them pulled again |
+| Mealie  | `ghcr.io/mealie-recipes/mealie` | `v3.29.0` | Upgrades its database on first start |
+| Ollama  | `ollama/ollama` | `0.40.5` | Answers only on this machine. Converts downloaded models on first use, so an older version needs them pulled again |
 | Updater (server only) | `ghcr.io/nicholas-fedor/watchtower` | `1.23.1` | Moves when you download the current `docker-compose.prod.yml` |
 | Beszel hub and agent | `henrygd/beszel`, `henrygd/beszel-agent` | `0.21.0` | Always use the same tag for both; the hub's data upgrades in place |
 | CUPS    | `olbat/cupsd` | pinned by digest | The digest of a dated tag; refresh it every few months |

@@ -39,7 +39,7 @@ def test_typing_filters_rows_across_every_panel(new_page):
     assert _visible(page, "refrigerated") == []
     assert _count(page, "room_temp") == "1 of 2"
     assert _count(page, "pantry") == "2 of 5"
-    assert _count(page, "refrigerated") == "0 of 6"
+    assert _count(page, "refrigerated") == "0 of 7"
     # A panel with no matches stays in place with one short line.
     assert page.is_visible("#panel-refrigerated .panel-nomatch")
     assert page.is_visible("#col-refrigerated")
@@ -65,7 +65,8 @@ def test_clear_button_and_escape_bring_every_row_back(new_page):
     page.fill("#invSearch", "shrimp")
     page.press("#invSearch", "Escape")
     assert page.input_value("#invSearch") == ""
-    assert len(_visible(page, "refrigerated")) == 6
+    # Six products, and the Greek Yogurt bought twice has a row for each date.
+    assert len(_visible(page, "refrigerated")) == 7
 
 
 def test_category_lists_every_group_and_combines_with_search(new_page):
