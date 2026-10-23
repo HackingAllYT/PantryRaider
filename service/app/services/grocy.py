@@ -1714,7 +1714,8 @@ class GrocyClient:
     async def move_product(self, product_id: int, bucket: str,
                            propose_best_by=None,
                            from_location_id: int | None = None,
-                           from_best_before_date: str | None = None) -> dict:
+                           from_best_before_date: str | None = None,
+                           amount: float | None = None) -> dict:
         """Transfer all stock of a product to the location for `bucket` and
         make that the product's default location.
 
@@ -1723,6 +1724,9 @@ class GrocyClient:
         default location then changes only when no stock is left elsewhere.
         With ``from_best_before_date`` too, only the stock with that best-by
         date there moves: one per-date row (see _move_best_by_group).
+        ``amount`` (which needs ``from_location_id``) moves only that much of
+        it, and asking for at least what is there moves all of it (see
+        _move_amount_from_location).
 
         ``propose_best_by`` is an optional callable ``(old_best_by: date,
         from_bucket: str) -> date | None`` (see
@@ -1752,7 +1756,14 @@ class GrocyClient:
         if from_best_before_date is not None:
             return await self._move_best_by_group(
                 product_id, to_name, propose_best_by, from_location_id,
-                from_best_before_date)
+                from_best_before_date, amount)
+        if amount is not None:
+            if not from_location_id:
+                raise GrocyError("A move of part of the stock needs the place it is in.")
+            moving = await self._move_amount_from_location(
+                product_id, to_name, propose_best_by, int(from_location_id), amount)
+            if moving is not None:
+                return moving
         to_id = await self.ensure_location(to_name)
 
         locations = {}
@@ -1831,12 +1842,80 @@ class GrocyClient:
             "best_by_change": change,
         }
 
+    async def _move_amount_from_location(self, product_id: int, to_name: str,
+                                         propose_best_by, from_id: int,
+                                         amount: float) -> dict | None:
+        """move_product for ``amount`` of the stock at ``from_id``, or None
+        when that is all of it (the whole-place move then runs as before).
+
+        The stock moves one best-by date at a time, through
+        _move_best_by_group, in the order Grocy itself would use it (undated
+        first, then earliest due), so only what arrives is re-dated. A date
+        Grocy cannot move on its own stops the move: before anything moved it
+        is refused as usual, after that the answer says what was
+        ``left_behind``.
+        """
+        if amount <= _DUST:
+            raise GrocyError("Nothing to move.")
+        entries = await self._get(f"/stock/products/{product_id}/entries") or []
+        at_source = [e for e in entries if _amount(e) > _DUST and _location_id(e) == from_id]
+        total = sum(_amount(e) for e in at_source)
+        if total <= _DUST:
+            raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
+        if amount >= total - _DUST:
+            return None
+        tokens = list(dict.fromkeys(e.get("best_before_date") or "none" for e in at_source))
+
+        moved = 0.0
+        best_by_updates: list[dict] = []
+        to_id = None
+        for token in tokens:
+            if amount - moved <= _DUST:
+                break
+            try:
+                part = await self._move_best_by_group(
+                    product_id, to_name, propose_best_by, from_id, token, amount - moved)
+            except GrocyError as e:
+                # Gone since the read: the next date can still serve.
+                if e.kind == "gone":
+                    continue
+                if moved > _DUST:
+                    break
+                raise
+            to_id = part["location_id"]
+            moved += part["moved_amount"]
+            best_by_updates += part["best_by_updates"]
+            if to_id == from_id or part["left_behind"] > _DUST:
+                break
+        if to_id is None:
+            raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
+
+        dated = [u for u in best_by_updates if u["old"] and u["new"]]
+        change = None
+        if dated:
+            change = "extended" if dated[0]["new"] > dated[0]["old"] else "shortened"
+        new_dates = [u["new"] for u in best_by_updates if u["new"]]
+        return {
+            "product_id": product_id,
+            "moved_amount": moved,
+            "location_id": to_id,
+            "best_by_updates": best_by_updates,
+            "new_best_by": min(new_dates) if new_dates else None,
+            "best_by_change": change,
+            "left_behind": 0.0 if to_id == from_id else max(0.0, amount - moved),
+        }
+
     async def _move_best_by_group(self, product_id: int, to_name: str, propose_best_by,
                                   from_location_id: int | None,
-                                  best_before_date: str) -> dict:
+                                  best_before_date: str,
+                                  amount: float | None = None) -> dict:
         """move_product for one per-date row: only the stock with
         ``best_before_date`` ("none" for stock with no date) at
-        ``from_location_id``.
+        ``from_location_id``, or only ``amount`` of it.
+
+        A partial amount takes the head's row in part, and Grocy splits it:
+        the part that moves arrives as a new row with the same stock id, and
+        only that arrival is re-dated, never the rest left at the source.
 
         Nothing is written, not even a new location, until a fresh read shows
         that Grocy hands the whole row over one head at a time: each transfer
@@ -1868,7 +1947,8 @@ class GrocyClient:
         total = left_at_source(entries)
         if total <= _DUST:
             raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
-        if best_by_group_reach(entries, from_id, best_before_date) < total - _DUST:
+        want = total if amount is None or amount >= total - _DUST else float(amount)
+        if best_by_group_reach(entries, from_id, best_before_date, want) < want - _DUST:
             raise GrocyError("Grocy would move other stock with it, so nothing was moved.",
                              kind="group")
         to_id = await self.ensure_location(to_name)
@@ -1888,17 +1968,20 @@ class GrocyClient:
         # Each pass moves one whole row, so this only caps a Grocy that never
         # lets go of one.
         for _ in range(len(entries) + 10):
-            left = left_at_source(entries)
+            left = min(left_at_source(entries), want - moved)
             if to_id == from_id or left <= _DUST:
                 break
             head = best_by_group_head(entries, from_id, best_before_date)
             if head is None or best_by_group_reach(
-                    entries, from_id, best_before_date) < left - _DUST:
+                    entries, from_id, best_before_date, left) < left - _DUST:
                 break   # a merge since the last pass put other stock in the way
+            # The head whole, or the part of it still to move: a whole row is
+            # sent by its exact amount, so no float crumb stays behind.
+            take = _amount(head) if _amount(head) - left <= _DUST else left
             there = {str(e.get("id")) for e in entries if _location_id(e) == to_id}
             try:
                 booked = await self._post(f"/stock/products/{product_id}/transfer", {
-                    "amount": _amount(head),
+                    "amount": take,
                     "location_id_from": from_id,
                     "location_id_to": to_id,
                     "stock_entry_id": head["stock_id"],
@@ -1933,7 +2016,10 @@ class GrocyClient:
                     entries = await self._get(entries_path) or []
             if strays or not arrived:
                 break   # Grocy moved other stock as well, or nothing
-        left_behind = 0.0 if to_id == from_id else left_at_source(entries)
+        # Only what was asked for and did not move is left behind; the rest of
+        # a partial move stays at the source on purpose.
+        left_behind = (0.0 if to_id == from_id
+                       else max(0.0, left_at_source(entries) - (total - want)))
 
         # As for one place's whole stock, the default location follows once
         # none of the product is left anywhere else.

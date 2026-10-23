@@ -1028,3 +1028,86 @@ def test_a_move_reads_again_once_when_a_merge_renamed_the_stock_id(grocy):
         read, "6ab9690b00001"]
     assert grocy.at(FREEZER) == [(_d(9), 3)]
     assert result["moved_amount"] == 3 and result["left_behind"] == 0
+
+
+# --- Move part of a row --------------------------------------------------------------
+
+def test_a_per_date_move_of_part_splits_the_row_and_re_dates_only_the_arrival(grocy):
+    """Freezing 4 of 6: the 2 left in the fridge keep their date."""
+    row = grocy.add(6, _d(5))
+    result = _move(propose_best_by=plus_90, from_location_id=FRIDGE,
+                   from_best_before_date=_d(5), amount=4)
+    assert grocy.sent("POST", "/transfer") == [
+        {"amount": 4, "location_id_from": FRIDGE, "location_id_to": FREEZER,
+         "stock_entry_id": row["stock_id"]}]
+    assert grocy.at(FRIDGE) == [(_d(5), 2)]
+    assert grocy.at(FREEZER) == [(_d(95), 4)]
+    assert result["moved_amount"] == 4 and result["left_behind"] == 0
+    assert result["best_by_updates"] == [{"old": _d(5), "new": _d(95)}]
+    # Stock stays in the fridge, so the product keeps its default location.
+    assert grocy.sent("PUT", "/objects/products/1") == []
+
+
+def test_a_move_of_part_takes_whole_entries_before_splitting_one(grocy):
+    grocy.add(2, _d(5))
+    grocy.add(3, _d(5), price=1.0)
+    result = _move(from_location_id=FRIDGE, from_best_before_date=_d(5), amount=3)
+    assert [t["amount"] for t in grocy.sent("POST", "/transfer")] == [2, 1]
+    assert grocy.at(FRIDGE) == [(_d(5), 2)]
+    assert grocy.at(FREEZER) == [(_d(5), 1), (_d(5), 2)]
+    assert result["moved_amount"] == 3 and result["left_behind"] == 0
+
+
+def test_asking_to_move_at_least_the_row_moves_all_of_it(grocy):
+    grocy.add(0.3, _d(5))
+    result = _move(from_location_id=FRIDGE, from_best_before_date=_d(5), amount=7)
+    assert [t["amount"] for t in grocy.sent("POST", "/transfer")] == [0.3]
+    assert grocy.at(FRIDGE) == []
+    assert result["moved_amount"] == 0.3 and result["left_behind"] == 0
+
+
+def test_a_move_of_part_reachable_without_other_stock_is_not_refused(grocy):
+    """The later entry sits behind an earlier date with its stock id, but the
+    first one alone covers the amount asked for."""
+    earlier = grocy.add(1, _d(2))
+    grocy.add(2, _d(9), price=1.0)
+    grocy.add(1, _d(9), stock_id=earlier["stock_id"], price=2.0)
+    result = _move(from_location_id=FRIDGE, from_best_before_date=_d(9), amount=2)
+    assert result["moved_amount"] == 2 and result["left_behind"] == 0
+    assert grocy.at(FRIDGE) == [(_d(2), 1), (_d(9), 1)]
+    refused = _refused(GrocyClient().move_product(
+        1, "frozen", from_location_id=FRIDGE, from_best_before_date=_d(9), amount=1))
+    assert refused.kind == "group"
+
+
+def test_a_move_of_part_of_a_place_goes_date_by_date_in_grocys_order(grocy):
+    """A row of one place with two dates: the stock Grocy would use first
+    moves first, and each date is re-dated on its own."""
+    grocy.add(3, _d(9))
+    grocy.add(2, _d(4), price=1.0)
+    result = _move(propose_best_by=plus_90, from_location_id=FRIDGE, amount=3)
+    assert [t["amount"] for t in grocy.sent("POST", "/transfer")] == [2, 1]
+    assert grocy.at(FRIDGE) == [(_d(9), 2)]
+    assert grocy.at(FREEZER) == [(_d(94), 2), (_d(99), 1)]
+    assert result["moved_amount"] == 3 and result["left_behind"] == 0
+    assert (result["new_best_by"], result["best_by_change"]) == (_d(94), "extended")
+    assert grocy.sent("PUT", "/objects/products/1") == []
+
+
+def test_a_move_of_all_of_a_place_by_amount_is_the_whole_place_move(grocy):
+    grocy.add(2, _d(4))
+    grocy.add(1, _d(9), price=1.0)
+    result = _move(from_location_id=FRIDGE, amount=3)
+    assert grocy.at(FRIDGE) == []
+    assert result["moved_amount"] == 3 and "left_behind" not in result
+    assert grocy.sent("PUT", "/objects/products/1") == [{"location_id": FREEZER}]
+
+
+def test_a_move_of_part_needs_its_place_and_refuses_tare_weight(grocy):
+    grocy.add(6, _d(5))
+    assert "place" in str(_refused(GrocyClient().move_product(1, "frozen", amount=2)))
+    grocy.product["enable_tare_weight_handling"] = "1"
+    refused = _refused(GrocyClient().move_product(
+        1, "frozen", from_location_id=FRIDGE, amount=2))
+    assert (refused.kind, str(refused)) == ("group", BEST_BY_ROW_TARE)
+    assert grocy.writes() == []

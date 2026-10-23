@@ -1,3 +1,4 @@
+import math
 import re
 from datetime import date
 
@@ -193,6 +194,9 @@ class MoveRequest(BaseModel):
     # With from_location_id, move only the stock there with this best-by date
     # (YYYY-MM-DD, or "none" for no date): one per-date row.
     from_best_before_date: str | None = None
+    # With from_location_id, move only this much of the stock in scope; at
+    # least what is there (or omitted) moves all of it.
+    amount: float | None = None
 
 
 class EditRequest(BaseModel):
@@ -249,13 +253,20 @@ async def move_item(product_id: int, body: MoveRequest, db: Session = Depends(ge
 
     ``from_best_before_date`` (which needs ``from_location_id``) moves one
     per-date row's own stock, and the answer adds how much was
-    ``left_behind``.
+    ``left_behind``. ``amount`` (which needs ``from_location_id`` too) moves
+    only that much of the stock in scope; ``left_behind`` then counts only
+    what was asked for and did not move.
     """
     if body.from_best_before_date is not None:
         problem = _best_by_scope_error(body.from_best_before_date, body.from_location_id,
                                        "from_best_before_date", "from_location_id")
         if problem:
             raise HTTPException(422, problem)
+    if body.amount is not None:
+        if not math.isfinite(body.amount) or body.amount <= 0:
+            raise HTTPException(422, "amount must be more than 0")
+        if body.from_location_id is None:
+            raise HTTPException(422, "amount needs from_location_id")
     grocy = GrocyClient()
     try:
         proposer = None
@@ -271,14 +282,17 @@ async def move_item(product_id: int, body: MoveRequest, db: Session = Depends(ge
                     defaults_service.storage_kind_for_bucket(from_bucket),
                     _to, _days)
 
+        # Only the scope the body names is passed on, so a caller that never
+        # sends an amount reaches move_product exactly as before.
+        scope = {}
         if body.from_best_before_date is not None:
-            return await grocy.move_product(product_id, body.bucket,
-                                            propose_best_by=proposer,
-                                            from_location_id=body.from_location_id,
-                                            from_best_before_date=body.from_best_before_date)
+            scope["from_best_before_date"] = body.from_best_before_date
+        if body.amount is not None:
+            scope["amount"] = body.amount
         return await grocy.move_product(product_id, body.bucket,
                                         propose_best_by=proposer,
-                                        from_location_id=body.from_location_id)
+                                        from_location_id=body.from_location_id,
+                                        **scope)
     except GrocyError as e:
         raise HTTPException(_ROW_STATUS.get(e.kind, 500), str(e))
     except Exception as e:
