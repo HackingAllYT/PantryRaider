@@ -2774,6 +2774,48 @@ if [ -f "$COMPOSE_FILE" ] && command -v docker >/dev/null 2>&1; then
     fi
   fi
 
+  # Grocy, when its running container is on an older image than the compose
+  # file now names (the migrate helper moves an older pin to the build with the
+  # PHP fix for CVE-2026-109618 and CVE-2026-109619). Pull the new image, stop
+  # Grocy, save its database beside the original, then start it on the new
+  # image. A Grocy 4.6 database is upgraded to 4.7 on first start and cannot
+  # go back, which is why the copy comes first. Best effort: when the pull
+  # fails Grocy keeps running as it was, and the next update tries again.
+  _refresh_grocy_image() {
+    local cid want have src db stamp _gl
+    cid="$(docker compose ps -q grocy 2>/dev/null | head -n1)"
+    [ -n "$cid" ] || return 0
+    want="$(REPO_DIR="$REPO" docker compose config --images grocy 2>/dev/null | head -n1)"
+    have="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)"
+    if [ -z "$want" ] || [ -z "$have" ] || [ "$want" = "$have" ]; then return 0; fi
+    log "Grocy runs $have; moving it to $want."
+    if ! _gl="$(REPO_DIR="$REPO" docker compose pull grocy 2>&1)"; then
+      log "$_gl"
+      log "WARN: could not download $want; Grocy keeps running as it was and the next update tries again."
+      return 0
+    fi
+    src="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' "$cid" 2>/dev/null)"
+    REPO_DIR="$REPO" docker compose stop grocy >/dev/null 2>&1 || true
+    db="$src/data/grocy.db"
+    if [ -n "$src" ] && [ -f "$db" ]; then
+      stamp="$(date +%Y%m%d-%H%M%S)"
+      if cp -fp "$db" "$db.bak-$stamp"; then
+        log "Saved Grocy's database to $db.bak-$stamp."
+      else
+        log "WARN: could not save a copy of Grocy's database, so Grocy stays on $have for now."
+        docker start "$cid" >/dev/null 2>&1 || true
+        return 0
+      fi
+    fi
+    if _gl="$(REPO_DIR="$REPO" docker compose up -d --no-deps grocy 2>&1)"; then
+      log "Grocy now runs $want."
+    else
+      log "$_gl"
+      log "WARN: could not start Grocy on $want; starting it as it was."
+      docker start "$cid" >/dev/null 2>&1 || true
+    fi
+  }
+
   # The compose file is copied in once at first boot and never replaced, so
   # bring an older one up to the current defaults with targeted edits (one
   # uvicorn worker, the Grocy/Mealie/Beszel bind variables, log limits on the
@@ -2796,6 +2838,9 @@ if [ -f "$COMPOSE_FILE" ] && command -v docker >/dev/null 2>&1; then
       [ -n "$_mig_log" ] && log "$_mig_log"
       log "WARN: could not check $COMPOSE_FILE for older settings; it is unchanged."
     fi
+    # Before the log-limit restarts below, so a Grocy that moved image is
+    # started on it only after its database has been saved.
+    _refresh_grocy_image
     # A Beszel hub without an admin account moved to this device only; apply
     # that now when it is running, rather than at the next restart of the stack.
     if grep -qx 'beszel' "$_mig_recreate" 2>/dev/null \

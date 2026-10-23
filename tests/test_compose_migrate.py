@@ -146,7 +146,7 @@ def _beszel_db(path: Path, *, superusers=(), users=0, legacy=False):
 
 # --- the real device file (imaged 2026-07-16, updated to 0.21.1) -----------
 
-def test_device_file_gets_the_four_targeted_edits_and_nothing_else(tmp_path):
+def test_device_file_gets_the_five_targeted_edits_and_nothing_else(tmp_path):
     install = _stack(tmp_path, "appliance-2026-07-16.yml")
     docker, _ = _docker_stub(tmp_path)
     before = (install / "docker-compose.yml").read_text()
@@ -157,6 +157,7 @@ def test_device_file_gets_the_four_targeted_edits_and_nothing_else(tmp_path):
     changes = _changed_lines(before, stripped)
     assert [new.strip() for _old, new in changes] == [
         WORKERS_CMD.strip(),
+        "image: lscr.io/linuxserver/grocy:v4.7.1-ls346   # pinned; matches docker-compose.prod.yml",
         '- "${GROCY_BIND:-0.0.0.0}:9383:80"',
         '- "${MEALIE_BIND:-0.0.0.0}:9285:9000"',
         '- "${BESZEL_BIND:-127.0.0.1}:8090:8090"',
@@ -259,7 +260,8 @@ def test_log_limit_on_an_older_file_without_beszel(tmp_path):
     out, recreate = _run(install, docker)
     stripped, starts = _without_log_blocks((install / "docker-compose.yml").read_text())
     assert len(starts) == 3
-    assert len(_changed_lines(before, stripped)) == 3  # command, Grocy and Mealie ports
+    # command, Grocy image, Grocy and Mealie ports
+    assert len(_changed_lines(before, stripped)) == 4
     assert recreate == "grocy\nmealie\n"
     assert "The logs of the app, Grocy and Mealie are now capped" in out
 
@@ -366,6 +368,8 @@ def test_user_edits_are_preserved(tmp_path):
         '"--no-proxy-headers"]': WORKERS_CMD,
         '      - "8383:80"   # moved: something else uses 9383 here':
             '      - "${GROCY_BIND:-0.0.0.0}:8383:80"   # moved: something else uses 9383 here',
+        "    image: lscr.io/linuxserver/grocy:4.6.0   # pinned; matches docker-compose.prod.yml":
+            "    image: lscr.io/linuxserver/grocy:v4.7.1-ls346   # pinned; matches docker-compose.prod.yml",
         '      - "9285:9000"': '      - "${MEALIE_BIND:-0.0.0.0}:9285:9000"',
         "      - '8091:8090'": '      - "${BESZEL_BIND:-127.0.0.1}:8091:8090"',
     }
@@ -380,6 +384,42 @@ def test_user_edits_are_preserved(tmp_path):
     assert env.rstrip().endswith("BESZEL_BIND=0.0.0.0")
     assert recreate == "grocy\nmealie\n"
     assert "stays open to your network" in out
+
+
+@pytest.mark.parametrize("image", [
+    "lscr.io/linuxserver/grocy:4.6.0",
+    "lscr.io/linuxserver/grocy:4.7.0",
+    "lscr.io/linuxserver/grocy:4.7.1",
+    "lscr.io/linuxserver/grocy:v4.7.1-ls345",
+    "linuxserver/grocy:v4.6.0-ls337",
+])
+def test_an_older_grocy_pin_moves_to_the_php_fix(tmp_path, image):
+    # Every Grocy build before ls346 ships PHP 8.5.6 or older, which has the
+    # php2shell RCE (CVE-2026-109618 and CVE-2026-109619).
+    text = (FIXTURES / "appliance-2026-07-16.yml").read_text().replace(
+        "lscr.io/linuxserver/grocy:4.6.0", image)
+    src = tmp_path / "src.yml"
+    src.write_text(text)
+    install = _stack(tmp_path, src)
+    docker, _ = _docker_stub(tmp_path)
+    out, _recreate = _run(install, docker)
+    after = (install / "docker-compose.yml").read_text()
+    assert "    image: lscr.io/linuxserver/grocy:v4.7.1-ls346   # pinned" in after
+    assert image + " " not in after
+    assert f"Grocy moves from {image} to lscr.io/linuxserver/grocy:v4.7.1-ls346" in out
+
+
+@pytest.mark.parametrize("image", [
+    "lscr.io/linuxserver/grocy:v4.7.1-ls346",
+    "lscr.io/linuxserver/grocy:v4.7.1-ls350",
+    "lscr.io/linuxserver/grocy:4.8.0",
+    "lscr.io/linuxserver/grocy:latest",
+    "lscr.io/linuxserver/grocy",
+    "lscr.io/linuxserver/grocy:4.7.1@sha256:" + "0" * 64,
+    "example.com/me/grocy:4.6.0",
+])
+def test_a_current_newer_or_foreign_grocy_image_is_left_alone(image):
+    assert not cm.grocy_image_is_stale(image)
 
 
 def test_an_explicit_bind_address_is_left_alone(tmp_path):

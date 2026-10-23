@@ -119,7 +119,7 @@ it from the **Apps** tab and just point Pantry Raider at it. The Compose stack
 above is only for people who would rather run everything from one place.
 
 When you install the Grocy template, change its **Repository** from
-`lscr.io/linuxserver/grocy` to `lscr.io/linuxserver/grocy:4.7.1`, the version
+`lscr.io/linuxserver/grocy` to `lscr.io/linuxserver/grocy:v4.7.1-ls346`, the version
 Pantry Raider is tested with. Left as it is, the template follows `:latest`,
 so Unraid can move Grocy to a new release on its own, and a new Grocy release
 can change its setup in a way that stops your inventory loading until you fix

@@ -353,6 +353,46 @@ theme, the Stream Deck layout, and so on.
   allow them on that key in Settings, Start Page. Bluetooth shelf buttons
   never run them, because anyone within radio range can fake a press.
 
+## Grocy security update (October 2026)
+
+On October 21, 2026 PHP fixed two flaws, CVE-2026-109618 and CVE-2026-109619,
+that let anyone who can reach a PHP web page run their own code on the server
+without signing in. Attacks are already happening. Grocy runs on PHP, and
+every Grocy image Pantry Raider shipped before this release (Grocy 4.6.0 and
+the earlier builds of 4.7.1) has the affected PHP 8.5.6. The fixed image is
+`lscr.io/linuxserver/grocy:v4.7.1-ls346`, with PHP 8.5.12.
+
+Update Grocy the way that matches your install:
+
+- **Raspberry Pi appliance, or a server set up with `install.sh`:** install the
+  latest Pantry Raider update (Settings, Backups & Updates, Update now, or wait
+  for the automatic update). The update saves a copy of Grocy's database next
+  to the original (`grocy.db.bak-<date>`), then moves Grocy to the fixed image.
+  A Grocy still on 4.6 upgrades its database to 4.7 at the same time, and your
+  inventory keeps working.
+- **Docker Compose server:** the updater that keeps Pantry Raider current
+  leaves Grocy alone, so do this once. Back up the `grocy` data folder, change
+  the Grocy `image:` line in your compose file to
+  `lscr.io/linuxserver/grocy:v4.7.1-ls346` (or download the current
+  `docker-compose.prod.yml`), then run
+  `docker compose pull grocy && docker compose up -d grocy`.
+- **Unraid compose stack:** the same change to the Grocy `image:` line, then
+  update the stack in the Compose Manager so it pulls the new image.
+- **Unraid with the Community Applications Grocy:** edit the Grocy container,
+  set **Repository** to `lscr.io/linuxserver/grocy:v4.7.1-ls346`, and Apply.
+  If you left it on `:latest`, Force Update gets the same fixed build.
+- **A Grocy you run some other way:** update it, then check that it runs PHP
+  8.5.12, 8.4.27, 8.3.36, 8.2.35 or newer.
+
+To check, run `docker exec foodassistant-grocy php -v` (use your Grocy
+container's name if it differs). It should say `PHP 8.5.12` or newer.
+
+If you cannot update right away, keep Grocy's own page off your network:
+add `GROCY_BIND=127.0.0.1` to the `.env` file next to the compose file and run
+`docker compose up -d grocy`. Pantry Raider keeps working, since it reaches
+Grocy over Docker's own network. That narrows who can reach Grocy but does not
+fix it, so update as soon as you can.
+
 ## Grocy, Mealie and Beszel on the network
 
 The Docker Compose files publish Grocy (port 9383) and Mealie (port 9285) on

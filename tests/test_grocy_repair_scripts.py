@@ -608,5 +608,5 @@ def test_every_managed_stack_mounts_the_self_heal_read_only(compose, mount):
     # Every stack moves to 4.7 together, and only alongside the self-heal
     # mount checked above: a 4.7 Grocy started on a 4.6 config.php without it
     # answers every request with an error page.
-    assert "lscr.io/linuxserver/grocy:4.7.1" in text
+    assert "lscr.io/linuxserver/grocy:v4.7.1-ls346" in text
     assert "lscr.io/linuxserver/grocy:4.6" not in text

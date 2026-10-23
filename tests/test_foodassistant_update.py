@@ -1179,6 +1179,70 @@ def test_hosted_update_recreates_running_grocy_and_mealie_for_their_log_limit(ri
     assert "Restarted mealie so its log limit takes effect." in out
 
 
+def _grocy_move_rig(rig, tmp_path, *, pull_ok=True):
+    helper = ROOT / "scripts" / "image-build" / "foodassistant-compose-migrate"
+    dest = rig["work"] / "scripts" / "image-build" / "foodassistant-compose-migrate"
+    shutil.copy(helper, dest)
+    _git(rig["work"], "add", "-A")
+    _git(rig["work"], "commit", "-m", "add compose migrate helper")
+    _git(rig["work"], "push", "origin", "main")
+    install = _hosted_rig(rig, tmp_path)
+    shutil.copy(ROOT / "tests" / "data" / "compose-migrate" / "appliance-2026-07-16.yml",
+                install / "docker-compose.yml")
+    config = install / "grocy"
+    (config / "data").mkdir(parents=True)
+    (config / "data" / "grocy.db").write_text("grocy 4.6 data")
+    d = tmp_path / "docker-grocy"
+    d.mkdir()
+    calls = tmp_path / "docker-calls"
+    stub = d / "docker"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$*" >> "{calls}"\n'
+        'if [ "$1 $2" = "compose up" ]; then cat > /dev/null; fi\n'
+        'if [ "$1 $2 $3 $4" = "compose ps -q grocy" ]; then echo abc123; exit 0; fi\n'
+        'if [ "$1 $2 $3 $4" = "compose config --images grocy" ]; then'
+        ' grep -o "lscr.io/linuxserver/grocy:[^ ]*" docker-compose.yml; exit 0; fi\n'
+        'case "$*" in\n'
+        '  "inspect -f {{.Config.Image}} abc123") echo lscr.io/linuxserver/grocy:4.6.0; exit 0;;\n'
+        f'  "inspect -f "*Mounts*" abc123") echo "{config}"; exit 0;;\n'
+        + ('  "compose pull grocy") echo "manifest unknown" >&2; exit 1;;\n' if not pull_ok else "")
+        + 'esac\n'
+        'for a in "$@"; do case "$a" in images) echo sha256:same; exit 0;; esac; done\n'
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    rig["env"]["PATH"] = f"{d}:{rig['env']['PATH']}"
+    return install, config, calls
+
+
+def test_hosted_update_moves_grocy_to_the_php_fix_after_saving_its_database(rig, tmp_path):
+    # FoodAssistant-1430w: every Grocy build before v4.7.1-ls346 ships a PHP
+    # with the php2shell RCE. The pin moves, the new image is pulled, Grocy
+    # stops, its database is copied, and only then does it start again.
+    install, config, calls = _grocy_move_rig(rig, tmp_path)
+    result, out = run_update(rig)
+    assert "lscr.io/linuxserver/grocy:v4.7.1-ls346" in (install / "docker-compose.yml").read_text()
+    backups = list((config / "data").glob("grocy.db.bak-*"))
+    assert [b.read_text() for b in backups] == ["grocy 4.6 data"]
+    log = calls.read_text().splitlines()
+    order = [log.index(c) for c in ("compose pull grocy", "compose stop grocy",
+                                    "compose up -d --no-deps grocy")]
+    assert order == sorted(order)
+    assert "Grocy runs lscr.io/linuxserver/grocy:4.6.0; moving it to" in out
+    assert "Grocy now runs lscr.io/linuxserver/grocy:v4.7.1-ls346." in out
+
+
+def test_a_failed_grocy_pull_leaves_grocy_running(rig, tmp_path):
+    install, config, calls = _grocy_move_rig(rig, tmp_path, pull_ok=False)
+    result, out = run_update(rig)
+    log = calls.read_text().splitlines()
+    assert "compose pull grocy" in log
+    assert "compose stop grocy" not in log
+    assert not list((config / "data").glob("grocy.db.bak-*"))
+    assert "could not download lscr.io/linuxserver/grocy:v4.7.1-ls346" in out
+
+
 def _add_streamdeck_package(rig):
     """Put a Stream Deck package in the checkout so the update can sync it."""
     pkg = rig["work"] / "streamdeck" / "foodassistant_streamdeck"

@@ -107,7 +107,10 @@ services:
     # own. Grocy upgrades its database on first start and cannot go back to 4.6
     # on the same data, so back up before the move. Before the next bump, check
     # that version's config-dist.php the same way.
-    image: lscr.io/linuxserver/grocy:4.7.1
+    # The tag names a LinuxServer build, not just the Grocy release, because
+    # the build carries PHP: ls346 is the first with PHP 8.5.12, which fixes
+    # CVE-2026-109618 and CVE-2026-109619.
+    image: lscr.io/linuxserver/grocy:v4.7.1-ls346
     container_name: foodassistant-grocy
     profiles: ["with-grocy"]
     environment:

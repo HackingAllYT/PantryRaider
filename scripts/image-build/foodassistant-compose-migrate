@@ -22,12 +22,21 @@ Edits it makes, each only when the old form is still there:
     has (json-file, three files of 10 MB) when they have no logging: key at
     all. Docker keeps a container's log without limit otherwise, which on an
     SD card means constant writes and, eventually, a full card. A service
-    that already has any logging: setting keeps it.
+    that already has any logging: setting keeps it;
+  - a LinuxServer Grocy image pinned to 4.6 or 4.7 at an older build than
+    GROCY_IMAGE moves to GROCY_IMAGE. Older builds ship a PHP with an
+    unauthenticated remote code execution flaw (CVE-2026-109618 and
+    CVE-2026-109619, fixed in PHP 8.5.12), and no 4.6 build will get the fix,
+    so this is the one place the helper moves Grocy to a newer release. A
+    newer pin, :latest, or an image from elsewhere is left alone. The update
+    saves Grocy's database before it starts the new image.
 
 Why edits rather than a fresh copy of the shipped file: the shipped file also
 moved Grocy to a release that upgrades its database one way, closed Ollama to
 the network, and changed how the Beszel agent pairs. Copying it over even an
-untouched old file would make those changes behind the owner's back.
+untouched old file would make those changes behind the owner's back. (The
+Grocy move above is the exception, made only because the security flaw is
+being exploited.)
 
 Safety: nothing changes unless at least one edit applies. The new text goes
 to a temp file beside the original and must pass `docker compose config -q`;
@@ -86,6 +95,12 @@ LOG_BLOCK = (
     (2, 'max-size: "10m"'),
     (2, 'max-file: "3"'),
 )
+# The Grocy build every stack runs, and the older pins that move to it: the
+# LinuxServer images of Grocy 4.6 and 4.7, by release or by build tag.
+GROCY_IMAGE = "lscr.io/linuxserver/grocy:v4.7.1-ls346"
+_GROCY_REPOS = ("lscr.io/linuxserver/grocy", "linuxserver/grocy",
+                "docker.io/linuxserver/grocy", "ghcr.io/linuxserver/grocy")
+_GROCY_TAG_RE = re.compile(r"^v?4\.(?P<minor>[67])\.(?P<patch>\d+)(?:-ls(?P<ls>\d+))?$")
 BESZEL_DATA_TARGET = "/beszel_data"
 # PocketBase makes this placeholder superuser itself while no real one exists.
 PB_INSTALLER_EMAIL = "__pbinstaller@example.com"
@@ -347,6 +362,39 @@ def _fix_ports(lines: list[str], block: Block, plan: Plan, *, beszel=None) -> No
                              "in .env to keep its page to this device.")
 
 
+def grocy_image_is_stale(image: str) -> bool:
+    """Whether a Grocy image reference is an older 4.6 or 4.7 LinuxServer pin
+    than GROCY_IMAGE. A bare release tag (4.7.1) counts as stale, because the
+    build it resolves to on a device is whatever was pulled first."""
+    repo, sep, tag = image.rpartition(":")
+    if not sep or "@" in image or repo not in _GROCY_REPOS:
+        return False
+    m = _GROCY_TAG_RE.match(tag)
+    if not m:
+        return False
+    have = (4, int(m.group("minor")), int(m.group("patch")))
+    want_m = _GROCY_TAG_RE.match(GROCY_IMAGE.rpartition(":")[2])
+    want = (4, int(want_m.group("minor")), int(want_m.group("patch")))
+    if have != want:
+        return have < want
+    return m.group("ls") is None or int(m.group("ls")) < int(want_m.group("ls"))
+
+
+def _fix_grocy_image(lines: list[str], block: Block, plan: Plan) -> None:
+    if not grocy_image_is_stale(block.image):
+        return
+    for i, line, key in _subsections(lines, block):
+        if key == "image" and line.strip().startswith("image:"):
+            break
+    else:
+        return
+    lines[i] = line.replace(block.image, GROCY_IMAGE, 1)
+    plan.changed = True
+    plan.messages.append(
+        f"Grocy moves from {block.image} to {GROCY_IMAGE}, which carries the PHP "
+        "security fix for CVE-2026-109618 and CVE-2026-109619.")
+
+
 def beszel_decide(plan: Plan, state: str) -> bool:
     """Record what happens to the Beszel hub's publish. False: leave it."""
     if state == "env":
@@ -456,6 +504,7 @@ def plan_migration(text: str, compose: Path, env_file: Path | None,
                      for _i, line, key in _subsections(lines, block)):
                 beszel = beszel_state(lines, block, compose, docker)
         _fix_ports(lines, block, plan, beszel=beszel)
+        _fix_grocy_image(lines, block, plan)
     # Last, because it adds lines and the edits above work on line indexes.
     _add_log_limits(lines, plan)
     return plan

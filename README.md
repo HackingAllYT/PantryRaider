@@ -1,5 +1,13 @@
 # Pantry Raider
 
+> [!CAUTION]
+> **Update Grocy now (October 2026).** A PHP flaw that is being attacked
+> (CVE-2026-109618 and CVE-2026-109619) lets anyone who can reach Grocy's page
+> run code on your server without signing in. Pi appliances and `install.sh`
+> servers get the fix with the latest Pantry Raider update. Docker Compose and
+> Unraid installs need one manual step, see
+> [Grocy security update](https://docs.pantryraider.app/security/#grocy-security-update-october-2026).
+
 > [!IMPORTANT]
 > **Public beta (0.21).** The kitchen side has been in daily use for months.
 > The parts that face other people, the Forager companion, remote access, and
@@ -329,7 +337,7 @@ Every bundled service other than Pantry Raider itself (Grocy, Mealie, Ollama, th
 
 | Service | Image | Tag | Notes |
 |---------|-------|-----|-------|
-| Grocy   | `lscr.io/linuxserver/grocy` | `4.7.1` | Upgrades its database on first start; see the Grocy note below |
+| Grocy   | `lscr.io/linuxserver/grocy` | `v4.7.1-ls346` | Upgrades its database on first start; see the Grocy note below |
 | Mealie  | `ghcr.io/mealie-recipes/mealie` | `v3.29.0` | Upgrades its database on first start |
 | Ollama  | `ollama/ollama` | `0.40.5` | Answers only on this machine. Converts downloaded models on first use, so an older version needs them pulled again |
 | Updater (server only) | `ghcr.io/nicholas-fedor/watchtower` | `1.23.1` | Moves when you download the current `docker-compose.prod.yml` |

@@ -77,7 +77,11 @@ services:
     # the same data, so back up before the move. Before the next bump, check
     # that version's config-dist.php the same way. On an appliance the OTA
     # helper also repairs the running container (foodassistant-grocy-repair).
-    image: lscr.io/linuxserver/grocy:4.7.1
+    # The tag names a LinuxServer build, not just the Grocy release, because
+    # the build carries PHP: ls346 is the first with PHP 8.5.12, which fixes
+    # CVE-2026-109618 and CVE-2026-109619. foodassistant-update moves an
+    # older Grocy pin to this one.
+    image: lscr.io/linuxserver/grocy:v4.7.1-ls346
     container_name: foodassistant-grocy
     environment:
       - PUID=1000

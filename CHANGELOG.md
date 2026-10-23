@@ -10,6 +10,11 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.130] - 2026-10-23
+
+### Security
+- **Grocy moves to a build with the PHP security fix.** Every Grocy image Pantry Raider shipped before now runs PHP 8.5.6, which has two flaws (CVE-2026-109618 and CVE-2026-109619) that let anyone who can reach Grocy's page run code on the server without signing in, and attacks are already happening. The compose files now pin `lscr.io/linuxserver/grocy:v4.7.1-ls346`, which has PHP 8.5.12. On a Raspberry Pi appliance or an `install.sh` server, this update saves a copy of Grocy's database and then moves Grocy to the fixed image on its own, including a Grocy still on 4.6. Docker Compose and Unraid installs need one manual step, because their updater never touches Grocy: see [Grocy security update](https://docs.pantryraider.app/security/#grocy-security-update-october-2026) for the exact commands.
+
 ## [0.21.128] - 2026-10-22
 
 ### Added

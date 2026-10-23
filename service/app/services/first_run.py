@@ -23,7 +23,7 @@ Hands-off rules, in order, per backend:
      again (a first boot can take minutes to start serving).
 
 Exact API sequences (verified against the pinned images):
-  Grocy 4.7.1 (lscr.io/linuxserver/grocy:4.7.1; 4.6.0 answers the same):
+  Grocy 4.7.1 (lscr.io/linuxserver/grocy:v4.7.1-ls346; 4.6.0 answers the same):
     POST /login (form: username, password, stay_logged_in) -> 302 to "/" on
     success ("/login?invalid=true" on failure), sets the session cookie
     (grocy_session on 4.6.0, grocy_session_access_token on 4.7.1). GET
