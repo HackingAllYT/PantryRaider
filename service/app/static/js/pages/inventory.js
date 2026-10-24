@@ -138,7 +138,7 @@ function renderPanel(panelId, countId, items, bucket) {
       </button>
       <button class="btn btn-outline-secondary btn-icon" title="Move to another location"
               aria-label="Move ${PR.esc(namedMid)} to another location"
-              data-on-click="openMoveModal(${item.product_id}, ${PR.escAttrJs(item.name)}, ${loc}, ${bbdArg})">
+              data-on-click="openMoveModal(${item.product_id}, ${PR.escAttrJs(item.name)}, ${loc}, ${bbdArg}, ${item.amount}, ${PR.escAttrJs(item.unit || '')})">
         <i class="bi bi-arrow-left-right"></i>
       </button>
       ${item.amount > 0 ? `
@@ -361,31 +361,73 @@ async function dropItem(e) {
 }
 
 // Move via modal (touch devices)
-let moveTarget = null;  // { productId, name, locationId, bestBy }
+let moveTarget = null;  // { productId, name, locationId, bestBy, amount }
 
-function openMoveModal(productId, name, locationId, bestBy) {
-  moveTarget = { productId, name, locationId, bestBy };
+function openMoveModal(productId, name, locationId, bestBy, amount, unit) {
+  moveTarget = { productId, name, locationId, bestBy, amount: Number(amount) || 0 };
   // A row of one best-by date says which date moves.
   document.getElementById('moveModalName').textContent =
     bestBy ? `${name}, ${bestByWords(bestBy)},` : name;
+  // Part of a row can move only from a known place, and only a row of more
+  // than one has a part to choose.
+  const group = document.getElementById('moveAmountGroup');
+  group.hidden = !(locationId && moveTarget.amount > 1);
+  if (!group.hidden) {
+    const input = document.getElementById('moveAmount');
+    input.max = moveTarget.amount;
+    input.value = amountText(moveTarget.amount);
+    document.getElementById('moveAmountOf').textContent =
+      `of ${amountText(moveTarget.amount)}${unit ? ' ' + unit : ''}`;
+  }
   new bootstrap.Modal(document.getElementById('moveModal')).show();
+}
+
+// The amount in the Move window, kept between one unit (or less, for a row
+// that holds less) and all of the row.
+function clampMoveAmount(x) {
+  if (!moveTarget) return 0;
+  const all = moveTarget.amount;
+  if (!(x > 0)) return Math.min(1, all);
+  return Math.min(all, x);
+}
+
+function bumpMoveAmount(delta) {
+  const input = document.getElementById('moveAmount');
+  const now = clampMoveAmount(parseFloat(input.value));
+  // A step from a part unit lands on a whole one: 2.5 goes to 2 or 3.
+  const next = delta < 0 ? Math.ceil(now) - 1 : Math.floor(now) + 1;
+  input.value = amountText(clampMoveAmount(next));
+}
+
+function moveAmountAll() {
+  if (moveTarget) document.getElementById('moveAmount').value = amountText(moveTarget.amount);
 }
 
 async function moveFromModal(bucket) {
   bootstrap.Modal.getInstance(document.getElementById('moveModal')).hide();
   if (!moveTarget) return;
-  const { productId, name, locationId, bestBy } = moveTarget;
+  const { productId, name, locationId, bestBy, amount } = moveTarget;
+  let part = null;
+  if (!document.getElementById('moveAmountGroup').hidden) {
+    const chosen = clampMoveAmount(parseFloat(document.getElementById('moveAmount').value));
+    // All of the row is sent as no amount at all: the move it always was. The
+    // box shows the row to one decimal, as the list does, so a row of 1.04
+    // reads 1.0, and leaving it there means all of it too.
+    if (chosen < Math.min(amount, Number(amountText(amount)))) part = chosen;
+  }
   moveTarget = null;
-  await moveItem(productId, bucket, name, locationId, bestBy);
+  await moveItem(productId, bucket, name, locationId, bestBy, part, amount);
 }
 
-async function moveItem(productId, bucket, name, locationId, bestBy) {
+async function moveItem(productId, bucket, name, locationId, bestBy, part, rowAmount) {
   try {
     // Only this row's stock moves; the same product kept elsewhere stays put,
     // and so does the stock with other best-by dates on a row of one date.
+    // A part moves only that much of it.
     const body = { bucket };
     if (locationId) body.from_location_id = locationId;
     if (bestBy) body.from_best_before_date = bestBy;
+    if (part) body.amount = part;
     const r = await fetch(`inventory/move/${productId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -395,7 +437,9 @@ async function moveItem(productId, bucket, name, locationId, bestBy) {
     // Crossing temperature natures adjusts the best-by (freezing extends,
     // thawing shortens, FoodAssistant-jty6); say so in the confirmation.
     const d = await r.json().catch(() => ({}));
-    let msg = `✓ Moved ${name} to ${BUCKET_LABELS[bucket]}`;
+    let msg = part
+      ? `✓ Moved ${amountText(d.moved_amount ?? part)} of ${amountText(rowAmount)} ${name} to ${BUCKET_LABELS[bucket]}`
+      : `✓ Moved ${name} to ${BUCKET_LABELS[bucket]}`;
     if (d.new_best_by && d.best_by_change) {
       msg += `, best-by ${d.best_by_change} to ${shortDate(d.new_best_by)}`;
     }

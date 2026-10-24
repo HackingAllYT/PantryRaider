@@ -319,6 +319,9 @@ _BAD_SCOPES = [
     ("POST", "/inventory/move/1", {"bucket": "frozen", "from_best_before_date": "2026-10-25"}),
     ("POST", "/inventory/move/1", {"bucket": "frozen", "from_location_id": 1,
                                    "from_best_before_date": "yesterday"}),
+    ("POST", "/inventory/move/1", {"bucket": "frozen", "from_location_id": 1, "amount": 0}),
+    ("POST", "/inventory/move/1", {"bucket": "frozen", "from_location_id": 1, "amount": -2}),
+    ("POST", "/inventory/move/1", {"bucket": "frozen", "amount": 2}),
 ]
 
 
@@ -499,3 +502,23 @@ def test_an_unsigned_reply_cannot_flip_it(satellite_mode):
     assert out["ok"] is True
     assert "inventory_rows_per_best_by" not in out["applied"]
     assert settings.inventory_rows_per_best_by is True
+
+
+def test_a_move_of_part_hands_the_amount_on(client):
+    seen = []
+
+    async def move(self, product_id, bucket, propose_best_by=None, from_location_id=None,
+                   from_best_before_date=None, amount=None):
+        seen.append((product_id, bucket, from_location_id, from_best_before_date, amount))
+        return {"product_id": product_id, "moved_amount": amount, "left_behind": 0.0}
+
+    with patch.object(GrocyClient, "move_product", move):
+        replies = [
+            client.post("/inventory/move/5", json={
+                "bucket": "other", "from_location_id": 2, "amount": 4}),
+            client.post("/inventory/move/5", json={
+                "bucket": "other", "from_location_id": 2,
+                "from_best_before_date": "2026-10-25", "amount": 0.5}),
+        ]
+    assert [r.status_code for r in replies] == [200] * 2
+    assert seen == [(5, "other", 2, None, 4.0), (5, "other", 2, "2026-10-25", 0.5)]

@@ -10,6 +10,11 @@ All notable changes to Pantry Raider are recorded here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.132] - 2026-10-24
+
+### Added
+- **Move part of a row to another place.** Move always took all of a row, so freezing 4 of 6 chicken breasts meant moving all 6 and fixing it in Grocy. The Move window now has an Amount box above the places, with − and + buttons and an All button. It starts at the whole row, so tapping a place straight away moves everything, as before. Only the part you move gets a new best-by date when it goes into or out of the freezer; what stays behind keeps its own. On a row with several dates, the stock Grocy would use first moves first. Dragging a row still moves all of it. Thanks to @HackingAllYT for the idea and for building it.
+
 ## [0.21.130] - 2026-10-23
 
 ### Security

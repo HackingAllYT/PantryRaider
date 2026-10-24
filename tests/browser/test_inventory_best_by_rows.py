@@ -11,6 +11,11 @@ for. A place with a single date keeps one plain row, whose buttons ask what
 they always have, apart from Edit: it names the row's place and date, so a
 changed date leaves the product's other places alone.
 
+The Move window can also take part of a row (#136). Its Amount box starts at
+the whole row, so tapping a place straight away moves everything, as dragging
+does, and only a smaller amount goes in the body. A row of one has nothing to
+split and shows no box.
+
 Grocy cannot always act on one date alone: it keeps some stock together under
 one stock id and takes an opened or the soonest one first. The server then
 refuses with its reason (409), or says the row's stock is gone (404), and the
@@ -24,6 +29,7 @@ page runs in en-US with today fixed at Oct 21, 2026.
 """
 from __future__ import annotations
 
+import copy
 from urllib.parse import urlsplit
 
 import pytest
@@ -287,6 +293,60 @@ def test_move_on_a_row_of_one_date_moves_that_date_alone(inventory):
     ]
 
 
+def test_move_takes_the_amount_chosen_in_its_window(inventory):
+    page = inventory(answers={"move": (200, {
+        "product_id": 41, "moved_amount": 7.0, "location_id": 2, "best_by_updates": [],
+        "new_best_by": None, "best_by_change": None, "left_behind": 0})}, **DESKTOP)
+    _button(page, "Move Coconut Yogurt, best by Nov 20, to another location").click()
+    page.wait_for_selector("#moveModal.show")
+    assert page.input_value("#moveAmount") == "8"
+    assert page.inner_text("#moveAmountOf") == "of 8 cup"
+    # Plus stops at the whole row; minus takes one off.
+    page.click('#moveModal button[aria-label="Move more"]')
+    assert page.input_value("#moveAmount") == "8"
+    page.click('#moveModal button[aria-label="Move fewer"]')
+    assert page.input_value("#moveAmount") == "7"
+    _then_reload(page, lambda: page.click('#moveModal [data-move-to="frozen"]'))
+    assert _toast(page) == ("✓ Moved 7 of 8 Coconut Yogurt to Frozen", False)
+    assert page.sent == [
+        ("/inventory/move/41", {"bucket": "frozen", "from_location_id": 1,
+                                "from_best_before_date": "2026-11-20", "amount": 7}),
+    ]
+
+
+def test_a_row_of_one_has_no_amount_to_choose(inventory):
+    page = inventory(**DESKTOP)
+    _button(page, "Move Butter to another location").click()
+    page.wait_for_selector("#moveModal.show")
+    assert page.is_hidden("#moveAmountGroup")
+
+
+@pytest.fixture
+def with_flour(monkeypatch):
+    """The canned rows plus 1.04 kg of flour, which its row and the Move
+    window both show as 1.0."""
+    rows = copy.deepcopy(DASHBOARD)
+    rows["pantry"].append({
+        "product_id": 50, "name": "Flour", "unit": "kg", "category": "Baking",
+        "product_group_id": 8, "product_group_name": "Condiments", "amount": 1.04,
+        "product_amount": 1.04, "amount_opened": 0.0, "best_before_date": "2027-03-01",
+        "days_remaining": 131, "urgency": "ok", "added_date": None, "location_id": 4,
+        "location_name": "Pantry / Dry Storage", "storage_bucket": "pantry"})
+    monkeypatch.setitem(globals(), "DASHBOARD", rows)
+
+
+@pytest.mark.parametrize("press_all", [False, True], ids=["straight_away", "after_all"])
+def test_a_row_the_window_rounds_still_moves_all_of_it(inventory, with_flour, press_all):
+    page = inventory(**DESKTOP)
+    _button(page, "Move Flour to another location").click()
+    page.wait_for_selector("#moveModal.show")
+    assert page.input_value("#moveAmount") == "1.0"
+    if press_all:
+        page.click('#moveModal button:has-text("All")')
+    _then_reload(page, lambda: page.click('#moveModal [data-move-to="frozen"]'))
+    assert page.sent == [("/inventory/move/50", {"bucket": "frozen", "from_location_id": 4})]
+
+
 def test_a_label_from_a_row_of_one_date_carries_that_date(inventory):
     page = inventory(**DESKTOP)
     for name in ("Print a label for Coconut Yogurt, best by Oct 24",
@@ -414,6 +474,21 @@ def test_an_open_grocy_did_not_do_on_the_row_alone_says_so(inventory):
     assert _toast(page) == (
         "Grocy did not open exactly one Coconut Yogurt from this row. "
         "The list now shows what it opened.", True)
+
+
+@pytest.mark.parametrize("device", [PHONE, KITCHEN_SCREEN], ids=["phone", "kitchen_screen"])
+def test_the_move_window_and_its_amount_fit_a_phone_and_a_kitchen_screen(inventory, device):
+    page = inventory(**device)
+    _button(page, "Move Coconut Yogurt, best by Nov 20, to another location").click()
+    page.wait_for_selector("#moveAmountGroup", state="visible")
+    # Measured once the window has finished sliding in.
+    page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#moveModal .modal-dialog'))"
+        ".transform === 'none'")
+    box = page.eval_on_selector("#moveModal .modal-content", "e => e.getBoundingClientRect().toJSON()")
+    assert box["top"] >= 0 and box["bottom"] <= device["viewport"]["height"]
+    assert box["right"] <= device["viewport"]["width"]
+    assert not page.errors
 
 
 @pytest.mark.parametrize("device", [PHONE, KITCHEN_SCREEN], ids=["phone", "kitchen_screen"])

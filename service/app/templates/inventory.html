@@ -219,6 +219,25 @@
         <button type="button" class="btn-close" aria-label="Close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body d-grid gap-2">
+        {# How much moves: it starts at all of the row, so tapping a place
+           straight away moves everything, as it always did. Hidden for a
+           row of one or less, and for stock with no recorded place. #}
+        <div id="moveAmountGroup" class="mb-1" hidden>
+          <label class="form-label small text-secondary mb-1" for="moveAmount">Amount</label>
+          <div class="d-flex align-items-center gap-2">
+            <div class="input-group">
+              <button class="btn btn-outline-secondary" type="button" data-on-click="bumpMoveAmount(-1)"
+                      aria-label="Move fewer"><i class="bi bi-dash-lg"></i></button>
+              <input type="number" min="0" step="any" inputmode="decimal"
+                     class="form-control text-center" id="moveAmount" aria-describedby="moveAmountOf">
+              <button class="btn btn-outline-secondary" type="button" data-on-click="bumpMoveAmount(1)"
+                      aria-label="Move more"><i class="bi bi-plus-lg"></i></button>
+            </div>
+            <button class="btn btn-outline-secondary text-nowrap" type="button"
+                    data-on-click="moveAmountAll()">All</button>
+          </div>
+          <div class="form-text" id="moveAmountOf"></div>
+        </div>
         {% for c in categories %}
         <button class="btn" style="border:1px solid {{ c.color }}; color:{{ c.color }}"
                 data-move-to="{{ c.key }}">

@@ -119,6 +119,11 @@ life, which for most food pushes it well out; the confirmation tells you the
 new date. Move it back from Frozen to Refrigerated and the date is pulled in to
 the shorter refrigerated shelf life instead.
 
+To freeze only some of it, set the Amount at the top of the move menu before
+you tap a place. Freezing 4 of 6 chicken breasts moves those 4 with a new date
+and leaves the other 2 in the fridge with the date they had. The Amount starts
+at the whole row, and dragging always moves all of it.
+
 The adjustment is careful in both directions. Freezing never shortens a date
 that is already further out than the freezer shelf life would set, and thawing
 never extends one: because the app does not keep a record of the pre-freeze
