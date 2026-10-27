@@ -123,7 +123,7 @@
       {% set d = item.days_remaining %}
       <tr>
         <td class="exp-name"><strong>{{ item.product.name if item.product else 'Unknown' }}</strong></td>
-        <td>{{ '%g' | format(item.amount | float) }} {{ item.unit_name or '' }}</td>
+        <td>{{ '%g' | format(item.amount | float) }} {{ (item.unit_name if item.amount | float == 1 else item.unit_name_plural or item.unit_name) or '' }}</td>
         <td><span class="badge bg-secondary">{{ item.location_name or '–' }}</span></td>
         <td>{{ item.best_before_date or '–' }}</td>
         <td>

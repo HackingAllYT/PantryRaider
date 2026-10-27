@@ -1399,11 +1399,15 @@ class GrocyClient:
             _rows("/objects/locations"), _rows("/objects/quantity_units"))
         locations = {str(r.get("id")): r.get("name") or "" for r in location_rows}
         units = {str(u.get("id")): u.get("name") for u in unit_rows if u.get("id") is not None}
+        plurals = {str(u.get("id")): u.get("name_plural") or u.get("name")
+                   for u in unit_rows if u.get("id") is not None}
         for entry in entries:
             product = entry.get("product") or {}
             loc_id = str(entry.get("location_id") or product.get("location_id") or "")
             entry["location_name"] = locations.get(loc_id, "")
             entry["unit_name"] = _stock_unit_name(entry, product, units) or ""
+            entry["unit_name_plural"] = (_stock_unit_name(entry, product, plurals)
+                                         or entry["unit_name"])
 
     def dashboard_product_groups(self) -> list[dict]:
         """Every Grocy product group as ``{"id", "name"}``, sorted by name.
@@ -1465,6 +1469,8 @@ class GrocyClient:
         if isinstance(unit_rows, BaseException):
             unit_rows = []
         units = {str(u.get("id")): u.get("name") for u in unit_rows if u.get("id") is not None}
+        plurals = {str(u.get("id")): u.get("name_plural") or u.get("name")
+                   for u in unit_rows if u.get("id") is not None}
         locations = {str(loc["id"]): loc["name"] for loc in location_rows}
         groups = {str(g["id"]): g["name"] for g in group_rows}
         self._dashboard_groups = group_rows   # for dashboard_product_groups()
@@ -1514,6 +1520,8 @@ class GrocyClient:
                 "product_id": pid,
                 "name": name,
                 "unit": _stock_unit_name(entry, product, units),
+                # For an amount other than one: "12 Pieces", not "12 Piece".
+                "unit_plural": _stock_unit_name(entry, product, plurals),
                 "category": groups.get(group_id, ""),
                 # The same group by id and name, for the Inventory page's
                 # category filter. No group, or a group since deleted, is

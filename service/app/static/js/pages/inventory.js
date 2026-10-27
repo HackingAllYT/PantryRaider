@@ -86,6 +86,11 @@ function bestByWords(bestBy) {
 }
 
 // An amount written the way a row writes its own: whole, or to one decimal.
+// The row's unit, plural unless it holds exactly one ("12 Pieces", "1 Piece").
+function unitLabel(item) {
+  return (item.amount === 1 ? item.unit : item.unit_plural || item.unit) || '';
+}
+
 function amountText(x) {
   const n = Number(x) || 0;
   return n % 1 === 0 ? n : n.toFixed(1);
@@ -127,7 +132,7 @@ function renderPanel(panelId, countId, items, bucket) {
         ${item.best_by_dates && item.best_by_dates.length > 1 ? bestByLine(item.best_by_dates) : ''}
       </div>
       ${showAdded && item.added_date ? `<span class="item-qty">${PR.esc(item.added_date.slice(0,10))}</span>` : ''}
-      <span class="item-qty"${bbd && item.product_amount != null ? ` title="${amountText(item.product_amount)} in all"` : ''}>${item.amount % 1 === 0 ? item.amount : item.amount.toFixed(1)}${item.unit ? ' ' + PR.esc(item.unit) : ''}</span>
+      <span class="item-qty"${bbd && item.product_amount != null ? ` title="${amountText(item.product_amount)} in all"` : ''}>${item.amount % 1 === 0 ? item.amount : item.amount.toFixed(1)}${item.unit ? ' ' + PR.esc(unitLabel(item)) : ''}</span>
       ${item.amount_opened > 0 ? `<span class="expiry-badge badge-opened" title="${item.amount_opened % 1 === 0 ? item.amount_opened : item.amount_opened.toFixed(1)} of these ${PR.esc(item.name)} already open">Opened</span>` : ''}
       ${expiryBadge(item)}
       <div class="item-actions">
@@ -138,7 +143,7 @@ function renderPanel(panelId, countId, items, bucket) {
       </button>
       <button class="btn btn-outline-secondary btn-icon" title="Move to another location"
               aria-label="Move ${PR.esc(namedMid)} to another location"
-              data-on-click="openMoveModal(${item.product_id}, ${PR.escAttrJs(item.name)}, ${loc}, ${bbdArg}, ${item.amount}, ${PR.escAttrJs(item.unit || '')})">
+              data-on-click="openMoveModal(${item.product_id}, ${PR.escAttrJs(item.name)}, ${loc}, ${bbdArg}, ${item.amount}, ${PR.escAttrJs(unitLabel(item))})">
         <i class="bi bi-arrow-left-right"></i>
       </button>
       ${item.amount > 0 ? `
