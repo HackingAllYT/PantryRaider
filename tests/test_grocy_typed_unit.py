@@ -16,7 +16,8 @@ import pytest
 
 from app.models.food import FoodItem
 from app.services import grocy as grocy_mod
-from app.services.grocy import GrocyClient, find_unit, unit_label, unit_names
+from app.services.grocy import (GrocyClient, counted_out, find_unit, unit_label,
+                                unit_names)
 
 PIECE = {"id": 2, "name": "Piece", "name_plural": "Pieces"}
 KILOGRAM = {"id": 4, "name": "Kilogram", "name_plural": "Kilograms"}
@@ -78,6 +79,10 @@ def _mock_grocy(monkeypatch, products, units, conversions=()):
             if request.method == "GET":
                 return httpx.Response(200, json=products)
             return httpx.Response(200, json={"created_object_id": 777})
+        if "/objects/products/" in path:
+            wanted = path.rsplit("/", 1)[1]
+            return httpx.Response(200, json=next(
+                (p for p in products if str(p["id"]) == wanted), {}))
         if "quantity_unit_conversions" in path:
             return httpx.Response(200, json=list(conversions))
         if "/stock/products/" in path and path.endswith("/add"):
@@ -168,3 +173,88 @@ def test_a_product_made_earlier_in_the_same_batch_keeps_its_unit(monkeypatch):
     assert len(_posts(sent, "/objects/products")) == 1
     assert len(_posts(sent, "/objects/quantity_units")) == 1
     assert "unit_note" not in result
+
+
+@pytest.mark.parametrize("quantity, typed, expected", [
+    (1, "dozen", (12, "Piece")),
+    (2, "Dozens", (24, "Piece")),
+    (1, "doz.", (12, "Piece")),
+    (1, "half a dozen", (6, "Piece")),
+    (1, "half dozen", (6, "Piece")),
+    (3, "pairs", (6, "Piece")),
+    (2, "kg", None),
+])
+def test_fixed_counts_are_pieces(quantity, typed, expected):
+    assert counted_out(quantity, typed) == expected
+
+
+def _eggs(quantity=1.0, unit="dozen"):
+    return FoodItem(name="Eggs", quantity=quantity, unit=unit)
+
+
+def test_a_dozen_makes_a_new_product_in_pieces(monkeypatch):
+    sent = _mock_grocy(monkeypatch, [], [PIECE])
+    result = asyncio.run(GrocyClient().import_item(_eggs()))
+    assert _posts(sent, "/objects/quantity_units") == []
+    assert _posts(sent, "/objects/products")[0]["qu_id_stock"] == 2
+    assert _added(sent, 777) == 12
+    assert "unit_note" not in result
+
+
+def test_a_dozen_never_creates_a_dozen_unit(monkeypatch):
+    sent = _mock_grocy(monkeypatch, [], [])
+    asyncio.run(GrocyClient().import_item(_eggs()))
+    assert _posts(sent, "/objects/quantity_units") == [
+        {"name": "Piece", "name_plural": "Pieces"}]
+
+
+def test_half_a_dozen_adds_six_to_a_product_in_pieces(monkeypatch):
+    eggs = {"id": 321, "name": "Eggs", "qu_id_stock": 2}
+    sent = _mock_grocy(monkeypatch, [eggs], [PIECE])
+    result = asyncio.run(GrocyClient().import_item(_eggs(unit="half a dozen")))
+    assert _added(sent, 321) == 6
+    assert "unit_note" not in result
+
+
+def test_a_dozen_on_a_product_in_another_unit_says_so(monkeypatch):
+    eggs = {"id": 321, "name": "Eggs", "qu_id_stock": 4}
+    sent = _mock_grocy(monkeypatch, [eggs], [PIECE, KILOGRAM])
+    result = asyncio.run(GrocyClient().import_item(_eggs()))
+    assert _added(sent, 321) == 12
+    assert result["unit_note"] == (
+        "Eggs is kept in Kilograms in Grocy, which has no conversion from "
+        "Pieces (1 dozen), so it was added as 12 Kilograms.")
+
+
+DOZEN = {"id": 8, "name": "Dozen", "name_plural": "Dozens"}
+
+
+def test_a_product_kept_in_its_own_dozen_unit_adds_one_dozen(monkeypatch):
+    eggs = {"id": 321, "name": "Eggs", "qu_id_stock": 8}
+    sent = _mock_grocy(monkeypatch, [eggs], [PIECE, DOZEN])
+    result = asyncio.run(GrocyClient().import_item(_eggs()))
+    assert _added(sent, 321) == 1
+    assert "unit_note" not in result
+
+
+def test_a_dozen_unit_the_product_converts_from_is_used_as_it_is(monkeypatch):
+    eggs = {"id": 321, "name": "Eggs", "qu_id_stock": 2}
+    conversions = [{"product_id": 321, "from_qu_id": 8, "to_qu_id": 2, "factor": 12}]
+    sent = _mock_grocy(monkeypatch, [eggs], [PIECE, DOZEN], conversions)
+    asyncio.run(GrocyClient().import_item(_eggs(quantity=2)))
+    assert _added(sent, 321) == 24
+
+
+def test_a_known_barcode_in_a_dozen_unit_adds_one_dozen(monkeypatch):
+    eggs = {"id": 321, "name": "Eggs", "qu_id_stock": 8}
+    sent = _mock_grocy(monkeypatch, [eggs], [PIECE, DOZEN])
+    result = asyncio.run(GrocyClient().add_to_product(321, _eggs(unit="Dozen"), 3))
+    assert _added(sent, 321) == 1
+    assert result["amount"] == 1
+
+
+def test_a_known_barcode_counts_a_dozen_out_when_grocy_has_no_such_unit(monkeypatch):
+    eggs = {"id": 321, "name": "Eggs", "qu_id_stock": 2}
+    sent = _mock_grocy(monkeypatch, [eggs], [PIECE])
+    asyncio.run(GrocyClient().add_to_product(321, _eggs(), 3))
+    assert _added(sent, 321) == 12

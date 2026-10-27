@@ -858,8 +858,25 @@ _KNOWN_UNITS = (
     ("Box", "Boxes", ()),
     ("Bunch", "Bunches", ()),
     ("Loaf", "Loaves", ()),
-    ("Dozen", "Dozen", ("doz",)),
 )
+
+# Counts with a fixed size are Pieces, never a unit of their own: a dozen
+# eggs is 12 Pieces, so using one leaves 11.
+_FIXED_COUNTS = {
+    "dozen": 12, "dozens": 12, "doz": 12,
+    "half dozen": 6, "half a dozen": 6, "half-dozen": 6,
+    "pair": 2, "pairs": 2,
+}
+
+
+def counted_out(quantity: float, typed: str) -> tuple[float, str] | None:
+    """``quantity`` of a fixed count ("dozen") as (Pieces, "Piece"). Pure.
+
+    None when ``typed`` is not a fixed count, so the unit stays as typed.
+    """
+    low = " ".join((typed or "").strip().rstrip(".").lower().split())
+    size = _FIXED_COUNTS.get(low)
+    return (quantity * size, "Piece") if size else None
 
 
 def unit_names(typed: str) -> tuple[str, str, set[str]]:
@@ -2242,8 +2259,8 @@ class GrocyClient:
         product = await self._get(f"/objects/products/{product_id}")
         return (await self._in_stock_unit(product, quantity, unit))[0]
 
-    async def _in_stock_unit(self, product: dict, quantity: float,
-                             unit: str) -> tuple[float, str | None]:
+    async def _in_stock_unit(self, product: dict, quantity: float, unit: str,
+                             typed: str | None = None) -> tuple[float, str | None]:
         """``quantity`` of ``unit`` in ``product``'s stock unit, and a note.
 
         The note is None when the amount is right as it stands: the units
@@ -2251,7 +2268,9 @@ class GrocyClient:
         unknown, or no real unit was typed (Piece and its kin, the queue's
         default). Otherwise the amount is kept as it was, in the stock unit,
         and the note says so, so "2 kg" on a product kept in Pieces is never
-        booked as 2 Pieces without a word."""
+        booked as 2 Pieces without a word. ``typed`` is the amount as typed
+        when a fixed count was turned into Pieces ("1 dozen"): a real unit,
+        so a product kept in another unit still gets the note."""
         product_id = _int_or_none(product.get("id"))
         stock_qu = _int_or_none(product.get("qu_id_stock"))
         units = await self._cached_list("/objects/quantity_units")
@@ -2263,15 +2282,38 @@ class GrocyClient:
                 product_id, unit_qu, stock_qu)
         if factor:
             return quantity * factor, None
-        if not stock_qu or unit_names(unit)[0] == "Piece":
+        if not stock_qu or (unit_names(unit)[0] == "Piece" and not typed):
             return quantity, None
         stock = next((u for u in units if _int_or_none(u.get("id")) == stock_qu), {})
         label = unit_label(stock, quantity) or "stock units"
+        source = f"Pieces ({typed})" if typed else unit.strip()
         return quantity, (
             f"{product.get('name') or 'This product'} is kept in "
             f"{stock.get('name_plural') or stock.get('name') or 'another unit'} "
-            f"in Grocy, which has no conversion from {unit.strip()}, so it was "
+            f"in Grocy, which has no conversion from {source}, so it was "
             f"added as {quantity:g} {label}.")
+
+    async def _count_out(self, product: dict | None,
+                         item: FoodItem) -> tuple[FoodItem, str | None]:
+        """``item`` with a fixed count ("1 dozen") as Pieces, and what was typed.
+
+        Left as it is, with None, when the unit is no fixed count, or when
+        ``product`` already uses a Grocy unit of that name: a kitchen that
+        keeps eggs in its own Dozen unit adds 1 Dozen, never 12 of them."""
+        counted = counted_out(item.quantity, item.unit)
+        if not counted:
+            return item, None
+        stock_qu = _int_or_none((product or {}).get("qu_id_stock"))
+        if stock_qu:
+            row = next((u for u in await self._cached_list("/objects/quantity_units")
+                        if unit_matches(u, item.unit)), None)
+            unit_qu = _int_or_none((row or {}).get("id"))
+            if unit_qu and (unit_qu == stock_qu or qu_conversion_factor(
+                    await self._product_conversions(int(product["id"])),
+                    int(product["id"]), unit_qu, stock_qu)):
+                return item, None
+        typed = f"{item.quantity:g} {item.unit.strip()}"
+        return item.model_copy(update={"quantity": counted[0], "unit": counted[1]}), typed
 
     async def add_to_product(self, product_id: int, item: FoodItem,
                              location_id: int | None = None) -> dict:
@@ -2282,7 +2324,9 @@ class GrocyClient:
         ``location_id`` is the product's own Grocy location, kept from the scan
         while the review screen left it chosen. Without one the stock goes to
         the storage area the user picked on review."""
-        amount = await self.stock_amount(product_id, item.quantity, item.unit)
+        product = await self._get(f"/objects/products/{product_id}")
+        item, _ = await self._count_out(product, item)
+        amount = (await self._in_stock_unit(product, item.quantity, item.unit))[0]
         if location_id is None:
             location_id = await self.ensure_location(
                 _STORAGE_LABEL[item.storage_type.value])
@@ -2291,17 +2335,21 @@ class GrocyClient:
         return {"product_id": product_id, "name": item.name, "amount": amount}
 
     async def import_item(self, item: FoodItem) -> dict:
+        existing = next((p for p in await self.get_products()
+                         if p["name"].lower() == item.name.lower()), None)
+        # "1 dozen" is 12 Pieces before anything else sees it, so a new
+        # product is made in Pieces and never in a Dozen unit.
+        item, typed = await self._count_out(existing, item)
         storage_name = _STORAGE_LABEL[item.storage_type.value]
         location_id = await self.ensure_location(storage_name)
         group_id = await self.ensure_product_group(item.category.value)
-        existing = next((p for p in await self.get_products()
-                         if p["name"].lower() == item.name.lower()), None)
         product_id = await self.ensure_product(item, location_id, group_id)
         note = None
         if existing is not None:
             # A product Grocy already has keeps its own unit: "500 g" of
             # flour kept in Kilograms goes in as 0.5 when Grocy converts.
-            amount, note = await self._in_stock_unit(existing, item.quantity, item.unit)
+            amount, note = await self._in_stock_unit(existing, item.quantity,
+                                                     item.unit, typed)
             item = item.model_copy(update={"quantity": amount})
         await self.add_stock(product_id, item, location_id)
         # Link the scanned barcode to the product so a later consume-mode scan
