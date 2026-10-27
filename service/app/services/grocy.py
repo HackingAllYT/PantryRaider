@@ -837,6 +837,82 @@ def unit_matches(unit: dict, name: str) -> bool:
     )
 
 
+# Units people type, as the Grocy quantity unit each one means: (name, plural,
+# other spellings). "item" is the queue's default when no unit was typed, so it
+# and its kin mean Grocy's own Piece, which is what every add used before.
+_KNOWN_UNITS = (
+    ("Piece", "Pieces", ("item", "items", "pc", "pcs", "ea", "each", "unit",
+                         "units", "count", "ct")),
+    ("Gram", "Grams", ("g", "gr", "grs", "gm", "gms")),
+    ("Kilogram", "Kilograms", ("kg", "kgs", "kilo", "kilos")),
+    ("Ounce", "Ounces", ("oz",)),
+    ("Pound", "Pounds", ("lb", "lbs")),
+    ("Milliliter", "Milliliters", ("ml", "millilitre", "millilitres")),
+    ("Liter", "Liters", ("l", "ltr", "litre", "litres")),
+    ("Fluid ounce", "Fluid ounces", ("fl oz", "floz")),
+    ("Cup", "Cups", ()),
+    ("Pint", "Pints", ("pt",)),
+    ("Quart", "Quarts", ("qt",)),
+    ("Gallon", "Gallons", ("gal",)),
+    ("Pack", "Packs", ("pk", "package", "packages", "pkg", "packet", "packets")),
+    ("Box", "Boxes", ()),
+    ("Bunch", "Bunches", ()),
+    ("Loaf", "Loaves", ()),
+    ("Dozen", "Dozen", ("doz",)),
+)
+
+
+def unit_names(typed: str) -> tuple[str, str, set[str]]:
+    """The Grocy unit a typed unit means: (name, plural, every spelling). Pure.
+
+    Known units ("kg", "Kilograms", "pcs") come back as the one name Grocy
+    should hold them under. Anything else keeps the word typed, made singular
+    and capitalized like Grocy's own units ("bags" is Bag, Bags). Nothing
+    typed is Piece, and so is anything that cannot be a unit's name (digits,
+    a whole sentence). The spellings are lowercase, for finding a unit Grocy
+    already has under any of them.
+    """
+    low = " ".join((typed or "").strip().rstrip(".").lower().split())
+    if re.search(r"\d", low) or len(low) > 30:
+        low = ""
+    for name, plural, aliases in _KNOWN_UNITS:
+        spellings = {name.lower(), plural.lower(), *aliases}
+        if not low or low in spellings:
+            return name, plural, spellings
+    singular = low
+    if re.search(r"(ss|x|ch|sh)es$", low):
+        singular = low[:-2]
+    elif low.endswith("s") and not low.endswith("ss"):
+        singular = low[:-1]
+    plural = singular + ("es" if re.search(r"(s|x|ch|sh)$", singular) else "s")
+    return (singular[:1].upper() + singular[1:], plural[:1].upper() + plural[1:],
+            {low, singular, plural})
+
+
+def unit_label(unit: dict, amount: float) -> str:
+    """``unit``'s name for ``amount`` of it: plural unless exactly one. Pure."""
+    name = unit.get("name") or ""
+    try:
+        one = float(amount) == 1
+    except (TypeError, ValueError):
+        one = False
+    return name if one else (unit.get("name_plural") or name)
+
+
+def find_unit(units: list[dict], typed: str) -> dict | None:
+    """The Grocy quantity unit ``typed`` names, by any spelling, or None. Pure.
+
+    A unit named exactly as typed wins over one that only shares a spelling,
+    so a kitchen holding both "kg" and "Kilogram" gets the one it typed.
+    """
+    exact = next((u for u in units or [] if unit_matches(u, typed)), None)
+    if exact is not None:
+        return exact
+    spellings = unit_names(typed)[2]
+    return next((u for u in units or [] if any(
+        unit_matches(u, s) for s in spellings)), None)
+
+
 # Shared connection pool for the life of the app
 _client = httpx.AsyncClient(timeout=15.0)
 _JSON = {"Content-Type": "application/json"}
@@ -985,15 +1061,17 @@ class GrocyClient:
         return await self._ensure_object("/objects/product_groups", name)
 
     async def ensure_quantity_unit(self, name: str = "Piece") -> int:
+        """The id of the Grocy unit ``name`` means (unit_names), made if missing."""
         rows = await self._cached_list("/objects/quantity_units")
-        for row in rows:
-            if row["name"].lower() in (name.lower(), name.lower() + "s"):
-                return int(row["id"])
+        row = find_unit(rows, name)
+        if row is not None:
+            return int(row["id"])
+        singular, plural, _ = unit_names(name)
         result = await self._post(
-            "/objects/quantity_units", {"name": name, "name_plural": name + "s"}
+            "/objects/quantity_units", {"name": singular, "name_plural": plural}
         )
         new_id = int(result["created_object_id"])
-        rows.append({"id": new_id, "name": name})
+        rows.append({"id": new_id, "name": singular, "name_plural": plural})
         return new_id
 
     async def ensure_product(self, item: FoodItem, location_id: int, group_id: int) -> int:
@@ -1002,7 +1080,10 @@ class GrocyClient:
         for p in products:
             if p["name"].lower() == name_lower:
                 return int(p["id"])
-        qu_id = await self.ensure_quantity_unit("Piece")
+        # A new product is stocked, bought, used and priced in the unit typed
+        # for it, so "2 kg" rice is 2 Kilograms. Grocy fills the consume and
+        # price units from the stock unit itself.
+        qu_id = await self.ensure_quantity_unit(item.unit)
         result = await self._post("/objects/products", {
             "name": item.name,
             "location_id": location_id,
@@ -1013,7 +1094,7 @@ class GrocyClient:
             "description": item.notes or "",
         })
         new_id = int(result["created_object_id"])
-        products.append({"id": new_id, "name": item.name})
+        products.append({"id": new_id, "name": item.name, "qu_id_stock": qu_id})
         return new_id
 
     async def add_stock(self, product_id: int, item: FoodItem,
@@ -2159,16 +2240,38 @@ class GrocyClient:
         Grocy does not know, or one with no conversion for this product, is
         taken as the stock unit itself, which is what the add used before."""
         product = await self._get(f"/objects/products/{product_id}")
+        return (await self._in_stock_unit(product, quantity, unit))[0]
+
+    async def _in_stock_unit(self, product: dict, quantity: float,
+                             unit: str) -> tuple[float, str | None]:
+        """``quantity`` of ``unit`` in ``product``'s stock unit, and a note.
+
+        The note is None when the amount is right as it stands: the units
+        match, Grocy converts between them, the product's stock unit is
+        unknown, or no real unit was typed (Piece and its kin, the queue's
+        default). Otherwise the amount is kept as it was, in the stock unit,
+        and the note says so, so "2 kg" on a product kept in Pieces is never
+        booked as 2 Pieces without a word."""
+        product_id = _int_or_none(product.get("id"))
         stock_qu = _int_or_none(product.get("qu_id_stock"))
-        unit_row = next((u for u in await self._cached_list("/objects/quantity_units")
-                         if unit_matches(u, unit)), None)
-        unit_qu = _int_or_none(unit_row and unit_row.get("id"))
-        if not stock_qu or not unit_qu:
-            return quantity
-        factor = qu_conversion_factor(
-            await self._product_conversions(product_id),
-            product_id, unit_qu, stock_qu)
-        return quantity * factor if factor else quantity
+        units = await self._cached_list("/objects/quantity_units")
+        unit_qu = _int_or_none((find_unit(units, unit) or {}).get("id"))
+        factor = None
+        if stock_qu and unit_qu:
+            factor = 1.0 if unit_qu == stock_qu else qu_conversion_factor(
+                await self._product_conversions(product_id),
+                product_id, unit_qu, stock_qu)
+        if factor:
+            return quantity * factor, None
+        if not stock_qu or unit_names(unit)[0] == "Piece":
+            return quantity, None
+        stock = next((u for u in units if _int_or_none(u.get("id")) == stock_qu), {})
+        label = unit_label(stock, quantity) or "stock units"
+        return quantity, (
+            f"{product.get('name') or 'This product'} is kept in "
+            f"{stock.get('name_plural') or stock.get('name') or 'another unit'} "
+            f"in Grocy, which has no conversion from {unit.strip()}, so it was "
+            f"added as {quantity:g} {label}.")
 
     async def add_to_product(self, product_id: int, item: FoodItem,
                              location_id: int | None = None) -> dict:
@@ -2191,7 +2294,15 @@ class GrocyClient:
         storage_name = _STORAGE_LABEL[item.storage_type.value]
         location_id = await self.ensure_location(storage_name)
         group_id = await self.ensure_product_group(item.category.value)
+        existing = next((p for p in await self.get_products()
+                         if p["name"].lower() == item.name.lower()), None)
         product_id = await self.ensure_product(item, location_id, group_id)
+        note = None
+        if existing is not None:
+            # A product Grocy already has keeps its own unit: "500 g" of
+            # flour kept in Kilograms goes in as 0.5 when Grocy converts.
+            amount, note = await self._in_stock_unit(existing, item.quantity, item.unit)
+            item = item.model_copy(update={"quantity": amount})
         await self.add_stock(product_id, item, location_id)
         # Link the scanned barcode to the product so a later consume-mode scan
         # can resolve it. Best effort: a failure here must not lose the stock
@@ -2201,7 +2312,10 @@ class GrocyClient:
                 await self.ensure_product_barcode(product_id, item.barcode)
             except Exception:  # noqa: BLE001
                 pass
-        return {"product_id": product_id, "name": item.name}
+        result = {"product_id": product_id, "name": item.name}
+        if note:
+            result["unit_note"] = note
+        return result
 
     async def get_shopping_lists(self) -> list[dict]:
         return await self._cached_list("/objects/shopping_lists")

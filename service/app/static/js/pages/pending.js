@@ -252,12 +252,17 @@ async function doCommit(ids) {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || d.message || r.statusText || 'The server refused it.');
     const errs = (d.results || []).filter(x => x.status === 'error');
+    // An item Grocy already keeps in another unit, with no conversion from
+    // the one typed, went in as typed in Grocy's unit: say so.
+    const notes = (d.results || []).filter(x => x.status === 'ok' && x.unit_note)
+      .map(x => ' ' + PR.esc(x.unit_note)).join('');
     if (errs.length === 0) {
-      document.getElementById('commit-status').innerHTML = '';
+      document.getElementById('commit-status').innerHTML = notes
+        ? `<div class="alert alert-warning py-1 px-2 small">Added ${d.imported} item(s).${notes}</div>` : '';
       showToast(`✓ Added ${d.imported} item(s) to your inventory`);
     } else {
       document.getElementById('commit-status').innerHTML =
-        `<div class="alert alert-warning py-1 px-2 small">${d.imported} imported, ${errs.length} failed: ${errs.map(x => PR.esc(x.error)).join('; ')}</div>`;
+        `<div class="alert alert-warning py-1 px-2 small">${d.imported} imported, ${errs.length} failed: ${errs.map(x => PR.esc(x.error)).join('; ')}${notes}</div>`;
     }
     await loadPending();
   } catch(e) {
