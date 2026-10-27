@@ -742,6 +742,65 @@ def best_by_label_stock_id(rows: list[dict], location_id,
     return newest["stock_id"]
 
 
+# What /stock reports for the whole product: on a row of one best-by date
+# those would contradict the row's own amount, so they are left off it.
+_PRODUCT_TOTALS = ("amount_aggregated", "amount_opened_aggregated",
+                   "is_aggregated_amount", "value")
+
+
+def expiring_by_date(stock: list[dict], stock_rows: list[dict], days: int,
+                     today: date | None = None) -> list[dict]:
+    """The Expiring page's rows: one per product, place and best-by date
+    within ``days`` (expired included), soonest first. Pure.
+
+    ``stock`` is /stock (one row per product, for the product itself) and
+    ``stock_rows`` the raw /objects/stock rows. A product's /stock row sums
+    every entry and carries only the earliest date, so three expired yogurts
+    and two good ones read as five expired, and acting on that row took all
+    five. Each row here is the stock of one per-date row instead
+    (stock_by_location_and_date): its own ``amount`` and
+    ``amount_opened``, its place as ``location_id``, its newest ``added_date``,
+    ``by_date`` set, and ``stock_entry_id`` for its label
+    (best_by_label_stock_id). Stock outside the window and undated stock get
+    no row, whatever else the product holds.
+    """
+    if today is None:
+        today = date.today()
+    products = {_int_or_none(e.get("product_id")): e for e in stock or []}
+    product_rows: dict[int, list[dict]] = {}
+    for row in stock_rows or []:
+        product_rows.setdefault(_int_or_none(row.get("product_id")) or 0, []).append(row)
+    out = []
+    for pid, places in stock_by_location_and_date(stock_rows).items():
+        entry = products.get(pid)
+        if entry is None:
+            continue  # /stock names the product; without it there is no row to show
+        for loc_id, dated in places.items():
+            for day, part in dated.items():
+                if not day:
+                    continue
+                remaining = (date.fromisoformat(day) - today).days
+                if remaining > days:
+                    continue
+                row = {k: v for k, v in entry.items() if k not in _PRODUCT_TOTALS}
+                row.update({
+                    "amount": part["amount"],
+                    "amount_opened": part["amount_opened"],
+                    "best_before_date": day,
+                    "days_remaining": remaining,
+                    "location_id": int(loc_id) if loc_id.isdigit() else None,
+                    "added_date": part["added"],
+                    "by_date": True,
+                    "stock_entry_id": best_by_label_stock_id(
+                        product_rows.get(pid), loc_id, day),
+                })
+                out.append(row)
+    out.sort(key=lambda r: (r["days_remaining"],
+                            ((r.get("product") or {}).get("name") or "").lower(),
+                            r["location_id"] or 0))
+    return out
+
+
 def _log_rows(booked, kind: str) -> list[dict]:
     """The stock_log rows of one type in a consume, open or transfer answer,
     float dust left out. Pure."""
@@ -1285,6 +1344,18 @@ class GrocyClient:
             await self._name_locations_and_units(expiring)
         return expiring
 
+    async def get_expiring_by_date(self, days: int = 7) -> list[dict]:
+        """The Expiring page's rows (expiring_by_date): one per product, place
+        and best-by date within ``days``, so its buttons act on that stock
+        alone. get_expiring keeps one row per product for the counts and
+        sensors that only ask how many products are expiring."""
+        stock, stock_rows = await asyncio.gather(
+            self._get("/stock"), self._get("/objects/stock"))
+        expiring = expiring_by_date(stock, stock_rows, days)
+        if expiring:
+            await self._name_locations_and_units(expiring)
+        return expiring
+
     async def _name_locations_and_units(self, entries: list[dict]) -> None:
         """Add location_name and unit_name to /stock rows, in place.
 
@@ -1607,9 +1678,20 @@ class GrocyClient:
         return await self._write_best_by(
             await self._fresh_entry(product_id, entry_id), new_date)
 
-    async def extend_best_by(self, product_id: int, delta_days: int) -> dict:
-        """Sniff test passed: push every dated stock entry's best-by out by
+    async def extend_best_by(self, product_id: int, delta_days: int, *,
+                             location_id: int | None = None,
+                             best_before_date: str | None = None,
+                             within_days: int = 7) -> dict:
+        """Sniff test passed: push the expiring stock's best-by out by
         ``delta_days`` (from today when the entry is already past its date).
+
+        Only stock that is actually expiring moves. ``best_before_date`` (an
+        ISO date) takes the entries with that date, in ``location_id`` when it
+        is given: an Expiring row's own stock. Without it, the dated entries
+        due within ``within_days`` of today, the Expiring page's default
+        window. A chicken kept good in the freezer until next year never
+        moves because the one in the fridge passed a sniff test. A row whose
+        stock has gone answers kind "gone" before anything is written.
 
         Reuses the same per-entry PUT path as edit_product, but keeps each
         entry's own date instead of flattening them all to one. Returns the
@@ -1622,15 +1704,30 @@ class GrocyClient:
         into it (see _fresh_entry). Landing on an entry already extended is
         harmless: that merge sums the amounts and nothing writes it again.
         """
+        if best_before_date is not None:
+            def expiring(e: dict) -> bool:
+                return (_amount(e) > _DUST
+                        and e.get("best_before_date") == best_before_date
+                        and (location_id is None or _location_id(e) == int(location_id)))
+        else:
+            last_day = (date.today() + timedelta(days=within_days)).isoformat()
+
+            def expiring(e: dict) -> bool:
+                return bool(e.get("best_before_date")) and e["best_before_date"] <= last_day
+
         entries = await self._get(f"/stock/products/{product_id}/entries") or []
         candidates = sorted(
-            (e for e in entries if e.get("id") and e.get("best_before_date")),
+            (e for e in entries if e.get("id") and e.get("best_before_date") and expiring(e)),
             key=lambda e: e["best_before_date"], reverse=True)
+        if best_before_date is not None and not candidates:
+            raise GrocyError(BEST_BY_ROW_GONE, kind="gone")
         updated = 0
         new_dates: list[str] = []
         for candidate in candidates:
             row = await self._fresh_entry(product_id, candidate["id"])
-            if row is None:
+            # A row that has moved since the read (another writer, or a merge
+            # into a row already extended) is no longer this one's to extend.
+            if row is None or not expiring(row):
                 continue
             new_date = sniff_test_new_date(row.get("best_before_date"), delta_days)
             if not new_date:

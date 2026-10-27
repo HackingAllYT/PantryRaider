@@ -57,6 +57,7 @@ def _mock_services(monkeypatch):
         return []
 
     monkeypatch.setattr(GrocyClient, "get_expiring", _expiring)
+    monkeypatch.setattr(GrocyClient, "get_expiring_by_date", _expiring)
 
 
 GET_PAGES = [
@@ -256,7 +257,7 @@ def test_expiring_consume_confirms_and_names_the_item(client, monkeypatch):
             "product": {"name": "Greek Yogurt"},
         }]
 
-    monkeypatch.setattr(GrocyClient, "get_expiring", _expiring)
+    monkeypatch.setattr(GrocyClient, "get_expiring_by_date", _expiring)
     r = client.get("/ui/expiring")
     assert r.status_code == 200
     assert "PR.confirmSubmit(this, " in r.text

@@ -194,8 +194,9 @@ async function patchItem(id, field, value, el) {
 
 // Sniff test on a review row whose product is already in stock and expiring
 // (FoodAssistant-8kvp): the same endpoint the Expiring page uses, extending
-// every dated stock entry of that product. The pending row itself, the new
-// scan waiting to be committed, is deliberately untouched.
+// the stock of that product due within the Expiring page's default window
+// (never, say, the same item kept good in the freezer). The pending row
+// itself, the new scan waiting to be committed, is deliberately untouched.
 async function sniffTest(productId, name, extraDays) {
   try {
     const r = await fetch(`expiring/extend/${productId}`, {

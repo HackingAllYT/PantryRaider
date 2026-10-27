@@ -2,12 +2,18 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from ..services.grocy import GrocyClient, GrocyError, error_payload
+from .inventory import _ROW_STATUS, _best_by_scope_error, _is_iso_date
 
 router = APIRouter(prefix="/expiring", tags=["expiring"])
 
 
 class ExtendRequest(BaseModel):
     days: int = Field(default=3, ge=1, le=30)
+    # An Expiring row's own stock: its best-by date, and its place when it
+    # has one. Without them only the stock due within the page's default
+    # window moves (GrocyClient.extend_best_by).
+    location_id: int | None = None
+    best_before_date: str | None = None
 
 
 class TossRequest(BaseModel):
@@ -15,6 +21,10 @@ class TossRequest(BaseModel):
     # screen's toss link does not, so the amount is optional and the server
     # looks up what is actually in stock.
     amount: float | None = Field(default=None, gt=0)
+    # An Expiring row is the stock of one best-by date in one place, and
+    # sends both so only that stock is tossed (GrocyClient.consume_stock_group).
+    location_id: int | None = None
+    best_before_date: str | None = None
 
 
 @router.post("/toss/{product_id}")
@@ -22,10 +32,28 @@ async def toss_item(product_id: int, body: TossRequest | None = None):
     """Toss it (FoodAssistant-64eg): the item went bad, so remove it from
     stock as spoiled rather than eaten. Grocy keeps the spoiled flag in its
     stock log, which is what the Waste summary on the Expiring page reads.
-    Without an amount the product's current stock amount is tossed."""
+    Without an amount the product's current stock amount is tossed.
+
+    With ``best_before_date`` and ``location_id`` only that row's stock goes,
+    never the product's good stock with a later date, and the answer says how
+    much of it was ``consumed`` and whether that was ``complete``. A row
+    Grocy cannot toss on its own answers 409, one whose stock is gone 404."""
+    body = body or TossRequest()
+    if body.best_before_date is not None:
+        problem = _best_by_scope_error(body.best_before_date, body.location_id,
+                                       "best_before_date", "location_id")
+        if problem:
+            raise HTTPException(422, problem)
     grocy = GrocyClient()
-    amount = body.amount if body else None
+    amount = body.amount
     try:
+        if body.best_before_date is not None:
+            # Without an amount the whole row goes (best_by_take).
+            result = await grocy.consume_stock_group(
+                product_id, amount if amount is not None else float("inf"),
+                body.location_id, body.best_before_date, spoiled=True)
+            _count_items_cache.invalidate()
+            return {"ok": True, **result, "amount": result["consumed"]}
         if amount is None:
             for entry in await grocy.get_stock():
                 if int(entry.get("product_id") or 0) == product_id:
@@ -35,7 +63,7 @@ async def toss_item(product_id: int, body: TossRequest | None = None):
                 raise HTTPException(404, "There is no stock of this item to toss.")
         await grocy.consume_stock(product_id, amount, spoiled=True)
     except GrocyError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(_ROW_STATUS.get(e.kind, 502), str(e))
     # Same reason as /extend: the count cache would otherwise show the old
     # number for up to 30s after the user just acted on this very list.
     _count_items_cache.invalidate()
@@ -45,14 +73,25 @@ async def toss_item(product_id: int, body: TossRequest | None = None):
 @router.post("/extend/{product_id}")
 async def extend_item(product_id: int, body: ExtendRequest):
     """Sniff test passed (FoodAssistant-fxnr): the item is still good, so push
-    its best-by out by a few days. Extends every dated stock entry of the
-    product (from today when the entry is already past its date) and returns
-    the earliest resulting date."""
+    its best-by out by a few days (from today when the entry is already past
+    its date) and return the earliest resulting date.
+
+    An Expiring row sends its best-by date and place, and only that stock
+    moves; without them, only the stock due within the page's default window
+    does. Stock that is not expiring, say the same product in the freezer,
+    never moves (GrocyClient.extend_best_by). A row whose stock has gone
+    answers 404."""
+    if body.location_id is not None and body.best_before_date is None:
+        raise HTTPException(422, "location_id needs best_before_date")
+    if body.best_before_date is not None and not _is_iso_date(body.best_before_date):
+        raise HTTPException(422, "best_before_date must be a date (YYYY-MM-DD)")
     grocy = GrocyClient()
     try:
-        result = await grocy.extend_best_by(product_id, body.days)
+        result = await grocy.extend_best_by(
+            product_id, body.days, location_id=body.location_id,
+            best_before_date=body.best_before_date)
     except GrocyError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(_ROW_STATUS.get(e.kind, 502), str(e))
     # The count cache would otherwise show the old number for up to 30s after
     # the user just acted on this very list.
     _count_items_cache.invalidate()

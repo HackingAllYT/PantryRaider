@@ -718,6 +718,21 @@ async def shopping_page(request: Request):
     })
 
 
+def _best_by_words(best_before_date: str | None) -> str:
+    """"best by Oct 25" for an Expiring row's questions, written the way the
+    Inventory page writes a row's date (the year only when it is far off),
+    or "" for a row without a readable date. Pure."""
+    from datetime import date
+    try:
+        day = date.fromisoformat(best_before_date or "")
+    except ValueError:
+        return ""
+    text = f"{day:%b} {day.day}"
+    if abs((day - date.today()).days) > 300:
+        text += f", {day.year}"
+    return f"best by {text}"
+
+
 @router.get("/expiring", response_class=HTMLResponse)
 async def expiring_page(request: Request, days: int = 7):
     from ..services.grocy import is_hard_expiry
@@ -728,7 +743,9 @@ async def expiring_page(request: Request, days: int = 7):
     grocy_repairable = False
     waste = None
     try:
-        items = await grocy.get_expiring(days)
+        # One row per product, place and best-by date, so a row's buttons
+        # take only the stock it shows (get_expiring_by_date).
+        items = await grocy.get_expiring_by_date(days)
     except Exception as e:
         # Keep the page shell up during a Grocy outage, but say so honestly:
         # an empty list would read as "all clear" (FoodAssistant-2cmm). A
@@ -745,6 +762,8 @@ async def expiring_page(request: Request, days: int = 7):
         # gets no sniff test chips (FoodAssistant-uqci); consume and toss stay.
         for item in items:
             item["hard_expiry"] = is_hard_expiry(item)
+            # The row's date in words for its questions: "best by Oct 25".
+            item["best_by_words"] = _best_by_words(item.get("best_before_date"))
         # The waste picture stays None during an outage so the template does
         # not claim "no spoilage recorded" when the truth is unknowable.
         waste = await load_waste(grocy)
@@ -765,16 +784,28 @@ async def expiring_page(request: Request, days: int = 7):
 
 @router.post("/consume/{product_id}")
 async def consume_item(request: Request, product_id: int, amount: float = Form(1.0),
-                       name: str = Form(""), location_id: int | None = Form(None)):
+                       name: str = Form(""), location_id: int | None = Form(None),
+                       best_before_date: str | None = Form(None)):
     grocy = GrocyClient()
     try:
-        # The Inventory page sends the row's location, so consuming a product
-        # kept in two places takes the stock from the row that was tapped (#73).
-        await grocy.consume_stock(product_id, amount, location_id=location_id)
         # Name the product in the toast so it is clear what just left stock
         # (an icon-only button plus a vague toast read wrong, FoodAssistant-w0kh).
         msg = f"{name} marked as consumed." if name.strip() else "Item marked as consumed."
         msg_type = "success"
+        if best_before_date and location_id:
+            # An Expiring row is the stock of one best-by date in one place,
+            # and takes only that, never the product's stock with a later date.
+            result = await grocy.consume_stock_group(product_id, amount, location_id,
+                                                     best_before_date)
+            if not result["complete"]:
+                msg = (f"Used {result['consumed']:g} of {result['requested']:g} "
+                       f"{name.strip() or 'items'}. Grocy would use other stock for the rest.")
+                msg_type = "warning"
+        else:
+            # The Inventory page sends the row's location, so consuming a
+            # product kept in two places takes the stock from the row that was
+            # tapped (#73).
+            await grocy.consume_stock(product_id, amount, location_id=location_id)
     except Exception as e:
         msg = f"Error: {e}"
         msg_type = "danger"
