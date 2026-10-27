@@ -979,7 +979,27 @@ class GrocyClient:
         return new_id
 
     async def ensure_location(self, name: str) -> int:
-        return await self._ensure_object("/objects/locations", name)
+        """Find the Grocy location ``name`` or create it. Updates cache.
+
+        A place Grocy already has under its own name (see _LOCATION_ALIASES)
+        is used when ``name`` itself is missing, so a fresh Grocy keeps one
+        fridge. A Freezer created here is marked as one in Grocy. Locations
+        that already exist are never changed.
+        """
+        rows = await self._cached_list("/objects/locations")
+        if not any(row["name"].lower() == name.lower() for row in rows):
+            for alias in _LOCATION_ALIASES.get(name.lower(), ()):
+                for row in rows:
+                    if (row["name"].lower() == alias.lower()
+                            and str(row.get("active", 1)) != "0"):
+                        return int(row["id"])
+        extra = None
+        if name.lower() == (location_for("frozen") or "").lower():
+            # Grocy re-dates a transfer into or out of a freezer only for a
+            # product with its own freezing/thawing days, which the products
+            # created here leave at 0, so the Move dates stay Pantry Raider's.
+            extra = {"is_freezer": 1}
+        return await self._ensure_object("/objects/locations", name, extra)
 
     async def ensure_product_group(self, name: str) -> int:
         return await self._ensure_object("/objects/product_groups", name)
@@ -2372,6 +2392,15 @@ _STORAGE_LABEL = {
     "frozen": "Freezer",
     "room_temp": "Counter / Room Temp",
     "dry": "Pantry / Dry Storage",
+}
+
+# Pantry Raider's location name (lower case) → Grocy's own name for the same
+# place, used by ensure_location only when the first is missing. A fresh Grocy
+# ships with a single "Fridge"; filing fridge stock there, not in a new
+# "Refrigerator" beside it, leaves one fridge. An install that already has a
+# "Refrigerator" keeps using it.
+_LOCATION_ALIASES = {
+    "refrigerator": ("Fridge",),
 }
 
 
