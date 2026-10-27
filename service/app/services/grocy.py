@@ -367,6 +367,11 @@ def stock_sniff_candidates(stock: list[dict], days: int = 7,
     a safety date, not a quality guess, so no sniff test is offered on it
     anywhere. When a name appears more than once the earliest date wins,
     since that is the entry driving the expiring row.
+
+    Fed the Expiring page's rows (expiring_by_date), the hook is the soonest
+    of those rows and also carries its ``location_id``, ``location_name``,
+    ``amount`` and ``unit_name``, so the Review card names exactly that stock
+    and its chips and toss act on that row alone.
     """
     if today is None:
         today = date.today()
@@ -393,6 +398,13 @@ def stock_sniff_candidates(stock: list[dict], days: int = 7,
             out[name] = {"product_id": pid,
                          "best_before_date": bbd,
                          "days_remaining": remaining}
+            if entry.get("by_date"):
+                out[name].update({
+                    "location_id": entry.get("location_id"),
+                    "location_name": entry.get("location_name") or "",
+                    "amount": float(entry.get("amount") or 0),
+                    "unit_name": entry.get("unit_name") or "",
+                })
     return out
 
 
@@ -1344,13 +1356,18 @@ class GrocyClient:
             await self._name_locations_and_units(expiring)
         return expiring
 
-    async def get_expiring_by_date(self, days: int = 7) -> list[dict]:
+    async def get_expiring_by_date(self, days: int = 7, *,
+                                   stock: list[dict] | None = None) -> list[dict]:
         """The Expiring page's rows (expiring_by_date): one per product, place
         and best-by date within ``days``, so its buttons act on that stock
         alone. get_expiring keeps one row per product for the counts and
-        sensors that only ask how many products are expiring."""
-        stock, stock_rows = await asyncio.gather(
-            self._get("/stock"), self._get("/objects/stock"))
+        sensors that only ask how many products are expiring. A caller that
+        already holds /stock passes it as ``stock``, saving that read."""
+        if stock is None:
+            stock, stock_rows = await asyncio.gather(
+                self._get("/stock"), self._get("/objects/stock"))
+        else:
+            stock_rows = await self._get("/objects/stock")
         expiring = expiring_by_date(stock, stock_rows, days)
         if expiring:
             await self._name_locations_and_units(expiring)

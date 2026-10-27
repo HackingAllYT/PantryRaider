@@ -137,16 +137,14 @@ async function loadPending(signal) {
             ${[1, 3, 5].map(d => `
             <button type="button" class="btn btn-outline-info fw-semibold px-2"
                     title="Passed the sniff test: keep the ${PR.esc(item.name)} already in stock ${d} more day${d !== 1 ? 's' : ''}"
-                    data-on-click="sniffTest(${item.sniff.product_id}, ${PR.esc(JSON.stringify(item.name))}, ${d})">
+                    data-on-click="sniffTest(${item.sniff.product_id}, ${PR.esc(JSON.stringify(item.name))}, ${d}, ${PR.esc(JSON.stringify(sniffScope(item.sniff)))})">
               +${d}d
             </button>`).join('')}
           </div>
-          <span class="meta-text">${item.sniff.days_remaining < 0
-            ? `the stock you already have expired ${-item.sniff.days_remaining} day${item.sniff.days_remaining === -1 ? '' : 's'} ago`
-            : `the stock you already have is best by ${item.sniff.best_before_date}`}</span>
+          <span class="meta-text">${PR.esc(sniffHint(item.sniff, item.name))}</span>
           <a href="#" class="small text-danger text-decoration-none"
-             title="It did not pass: toss the ${PR.esc(item.name)} already in stock (records it as spoiled and removes it)"
-             data-on-click="tossStock(${item.sniff.product_id}, ${PR.esc(JSON.stringify(item.name))}); return false;">
+             title="It did not pass: toss ${PR.esc(sniffWhat(item.sniff, item.name))} (records it as spoiled and removes it)"
+             data-on-click="tossStock(${item.sniff.product_id}, ${PR.esc(JSON.stringify(item.name))}, ${PR.esc(JSON.stringify(item.sniff))}); return false;">
             <i class="bi bi-trash me-1"></i>Toss it
           </a>
         </div>` : ''}
@@ -192,44 +190,105 @@ async function patchItem(id, field, value, el) {
   }
 }
 
+// The stock a review row's sniff hook stands for: the soonest row of the
+// Expiring page for that product, one best-by date in one place. Its hint,
+// its chips and its toss all name and act on that stock alone, never good
+// stock with a later date or the same item kept in the freezer. A hook
+// without a place keeps the product-wide calls and wording.
+function sniffScope(sniff) {
+  return sniff && sniff.location_id
+    ? { location_id: sniff.location_id, best_before_date: sniff.best_before_date }
+    : null;
+}
+
+// "Oct 25", the way the Expiring and Inventory pages write a best-by date.
+function sniffDate(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// "3 Greek Yogurt in the Fridge", or "the Greek Yogurt already in stock".
+function sniffWhat(sniff, name) {
+  if (!sniffScope(sniff)) return `the ${name} already in stock`;
+  const where = sniff.location_name ? ` in the ${sniff.location_name}` : '';
+  return `${+Number(sniff.amount).toFixed(2)} ${name}${where}`;
+}
+
+// The hint beside the chips: which stock, and how far gone it is.
+function sniffHint(sniff, name) {
+  const days = sniff.days_remaining;
+  if (!sniffScope(sniff)) {
+    return days < 0
+      ? `the stock you already have expired ${-days} day${days === -1 ? '' : 's'} ago`
+      : `the stock you already have is best by ${sniff.best_before_date}`;
+  }
+  const when = days < 0 ? `expired ${-days} day${days === -1 ? '' : 's'} ago`
+    : days === 0 ? 'expires today'
+    : `best by ${sniffDate(sniff.best_before_date)}`;
+  return `${sniffWhat(sniff, name)} ${when}`;
+}
+
+// A refusal from the server: 404 when the row's stock is gone, 409 when
+// Grocy cannot act on it alone. Either way nothing changed, and the hint no
+// longer shows what is there, so the list is read again.
+function sniffRefused(r, d) {
+  const err = new Error(d.detail || d.message || r.statusText);
+  err.stale = r.status === 404 || r.status === 409;
+  return err;
+}
+
 // Sniff test on a review row whose product is already in stock and expiring
 // (FoodAssistant-8kvp): the same endpoint the Expiring page uses, extending
-// the stock of that product due within the Expiring page's default window
-// (never, say, the same item kept good in the freezer). The pending row
-// itself, the new scan waiting to be committed, is deliberately untouched.
-async function sniffTest(productId, name, extraDays) {
+// only the row's stock (sniffScope). The pending row itself, the new scan
+// waiting to be committed, is deliberately untouched.
+async function sniffTest(productId, name, extraDays, scope) {
   try {
     const r = await fetch(`expiring/extend/${productId}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ days: extraDays }),
+      body: JSON.stringify({ days: extraDays, ...(scope || {}) }),
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) throw new Error(d.detail || d.message || r.statusText);
+    if (!r.ok || !d.ok) throw sniffRefused(r, d);
     showToast(d.new_best_by
       ? `Sniff test passed: ${name} is now best by ${d.new_best_by}.`
       : `Sniff test passed, but ${name} had no best-by date to extend.`);
     await loadPending();
   } catch (e) {
     showToast(`Could not update ${name}: ${e.message}`, true);
+    if (e.stale) await loadPending();
   }
 }
 
 // Toss on a review row whose product is already in stock and expiring
 // (FoodAssistant-64eg): the sniff test's honest opposite. The same endpoint
-// the Expiring page uses removes that stock as spoiled; without an amount the
-// server tosses what is actually there. The pending row itself, the new scan
-// waiting to be committed, is deliberately untouched.
-async function tossStock(productId, name) {
-  if (!(await PR.confirmBox('This records it as spoiled and removes it from your stock.', { title: `Toss the ${name} already in stock?`, ok: 'Toss', danger: true }))) return;
+// the Expiring page uses removes the row's stock as spoiled (sniffScope),
+// and the question names it: "Toss 3 Greek Yogurt (best by Oct 25)?". The
+// pending row itself, the new scan waiting to be committed, is deliberately
+// untouched.
+async function tossStock(productId, name, sniff) {
+  const scope = sniffScope(sniff);
+  const title = scope
+    ? `Toss ${+Number(sniff.amount).toFixed(2)} ${name} (best by ${sniffDate(sniff.best_before_date)})?`
+    : `Toss the ${name} already in stock?`;
+  if (!(await PR.confirmBox('This records it as spoiled and removes it from your stock.', { title, ok: 'Toss', danger: true }))) return;
   try {
-    const r = await fetch(`expiring/toss/${productId}`, { method: 'POST' });
+    const r = await fetch(`expiring/toss/${productId}`, scope ? {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ amount: sniff.amount, ...scope }),
+    } : { method: 'POST' });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.ok) throw new Error(d.detail || d.message || r.statusText);
-    showToast(`${name} tossed and recorded as spoiled.`);
+    if (!r.ok || !d.ok) throw sniffRefused(r, d);
+    if (d.complete === false) {
+      showToast(`Tossed ${+Number(d.consumed).toFixed(2)} of ${+Number(d.requested).toFixed(2)} ${name}. `
+        + 'Grocy would use other stock for the rest.', true);
+    } else {
+      showToast(`${name} tossed and recorded as spoiled.`);
+    }
     await loadPending();
   } catch (e) {
     showToast(`Could not toss ${name}: ${e.message}`, true);
+    if (e.stale) await loadPending();
   }
 }
 
