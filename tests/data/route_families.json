@@ -365,6 +365,8 @@
  "POST /setup/display/wake": "admin",
  "POST /setup/first-run/reveal": "admin",
  "POST /setup/first-run/{service}": "admin",
+ "POST /setup/grocy/mark-freezer": "admin",
+ "POST /setup/grocy/merge-fridges": "admin",
  "POST /setup/grocy/repair": "admin",
  "POST /setup/ha-slots/{position}": "admin",
  "POST /setup/ha/cameras": "admin",

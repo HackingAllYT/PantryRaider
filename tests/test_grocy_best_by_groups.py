@@ -907,6 +907,29 @@ def test_grocys_own_freezer_date_on_arrival_stands(grocy):
     assert (result["new_best_by"], result["best_by_change"]) == (_d(60), "extended")
 
 
+def test_a_whole_move_reports_grocys_own_freezer_date(grocy):
+    """The whole-product Move dates each row before its transfer, and Grocy
+    then dates it again on the way into its freezer: the answer (and the
+    toast) carries the date Grocy holds."""
+    grocy.product["default_best_before_days_after_freezing"] = 60
+    grocy.add(3, _d(30))
+    grocy.add(1, _d(4))
+    result = _move(propose_best_by=plus_90)
+    assert grocy.at(FREEZER) == [(_d(60), 1), (_d(60), 3)]
+    assert sorted(u["new"] for u in result["best_by_updates"]) == [_d(60), _d(60)]
+    assert sorted(u["old"] for u in result["best_by_updates"]) == [_d(4), _d(30)]
+    assert (result["new_best_by"], result["best_by_change"]) == (_d(60), "extended")
+
+
+def test_a_whole_move_thawing_with_grocys_days_reports_them(grocy):
+    grocy.product["default_best_before_days_after_thawing"] = 2
+    grocy.add(1, _d(200), FREEZER)
+    result = _move(bucket="refrigerated")
+    assert grocy.at(FRIDGE) == [(_d(2), 1)]
+    assert result["best_by_updates"] == [{"old": _d(200), "new": _d(2)}]
+    assert (result["new_best_by"], result["best_by_change"]) == (_d(2), "shortened")
+
+
 def test_a_move_grocy_would_mix_with_other_stock_writes_nothing(grocy):
     """Checked before anything is written, even the new place: the pantry
     location does not exist yet in this Grocy."""

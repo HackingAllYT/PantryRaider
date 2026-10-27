@@ -342,6 +342,19 @@ function actionItemCard(it) {
   }
   // Kitchen history shortened a best-by date (FoodAssistant-p3ind): keep it,
   // or turn the learning off from right here.
+  // An older install's Grocy locations: two fridges to merge, or a Freezer
+  // Grocy does not know is one. Nothing changes until the button is pressed.
+  const grocyFix = GROCY_LOCATION_FIXES[it.kind];
+  if (grocyFix && section && section.dataset.managesSettings === '1') {
+    btns.appendChild(actionBtn(grocyFix.label, 'primary',
+      (ev) => fixGrocyLocations(it, grocyFix, ev.currentTarget, text)));
+  } else if (grocyFix) {
+    const where = document.createElement('div');
+    where.className = 'meta-text';
+    where.textContent = 'To change this, ask whoever manages Pantry Raider to open this inbox on the main server.';
+    text.appendChild(where);
+  }
+  if (grocyFix && grocyFixErrors[it.id]) showGrocyFixError(text, grocyFixErrors[it.id]);
   if (it.kind === 'kitchen_history') {
     btns.appendChild(actionBtn('Got it', 'outline-secondary', () => actionItemAct(it.id, 'resolve')));
     if (section && section.dataset.managesSettings === '1') {
@@ -386,6 +399,62 @@ async function turnOffKitchenHistory() {
   } catch (e) { /* the setting is off; leftover notices can be dismissed */ }
   showToast('Best-by dates will use the standard estimates again.');
   loadActionItems();
+}
+
+const GROCY_LOCATION_FIXES = {
+  grocy_two_fridges: { label: 'Merge', busy: 'Merging…', path: 'setup/grocy/merge-fridges' },
+  grocy_freezer_flag: { label: 'Mark as freezer', busy: 'Saving…', path: 'setup/grocy/mark-freezer' },
+};
+
+// What Grocy answered when a fix failed, by item id, so the reason stays on
+// the item through the inbox's own refreshes.
+const grocyFixErrors = {};
+
+function showGrocyFixError(text, msg) {
+  const old = text.querySelector('.grocy-fix-error');
+  if (old) old.remove();
+  if (!msg) return;
+  const err = document.createElement('div');
+  err.className = 'small text-danger grocy-fix-error';
+  err.setAttribute('role', 'alert');
+  err.textContent = msg;
+  text.appendChild(err);
+}
+
+// The server reads Grocy again and does only what is still needed, so a
+// second press (or one after a merge was cut short) is safe. When Grocy
+// refuses, the reason stays on the item rather than in a passing toast.
+async function fixGrocyLocations(it, fix, btn, text) {
+  const p = it.payload || {};
+  if (it.kind === 'grocy_two_fridges') {
+    const from = p.from_name || 'Fridge';
+    const to = p.to_name || 'Refrigerator';
+    if (!(await PR.confirmBox(`Everything in ${from} moves to ${to}, and ${from} is hidden in Grocy.`,
+      { title: `Merge ${from} into ${to}?`, ok: 'Merge' }))) return;
+  }
+  delete grocyFixErrors[it.id];
+  showGrocyFixError(text, '');
+  btn.disabled = true;
+  btn.textContent = fix.busy;
+  let data = {};
+  let ok = false;
+  try {
+    const r = await fetch(fix.path, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    try { data = await r.json(); } catch (e) { data = {}; }
+    ok = r.ok && data.ok;
+  } catch (e) {
+    data = { error: 'Could not reach Pantry Raider. Try again.' };
+  }
+  if (ok) {
+    showToast(data.message || 'Done');
+    loadActionItems();
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = fix.label;
+  grocyFixErrors[it.id] = data.error || data.detail || 'Grocy did not take the change. Try again.';
+  showGrocyFixError(text, grocyFixErrors[it.id]);
 }
 
 function actionBtn(label, variant, onclick) {

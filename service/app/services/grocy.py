@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import html as _html
 import re
 
@@ -780,6 +781,23 @@ def _best_by_arrivals(booked, location_id,
     return own, other
 
 
+def _transfer_redates(booked) -> list[tuple[str | None, str | None]]:
+    """(date the stock left with, date it arrived with) for each row of a
+    transfer answer that Grocy re-dated on the way (its own freezer rule).
+    Pure."""
+    sent = {r.get("correlation_id"): r for r in _log_rows(booked, "transfer_from")}
+    out = []
+    for row in _log_rows(booked, "transfer_to"):
+        source = sent.get(row.get("correlation_id"))
+        if source is None:
+            continue
+        left_with = source.get("best_before_date") or None
+        arrived_with = row.get("best_before_date") or None
+        if left_with != arrived_with:
+            out.append((left_with, arrived_with))
+    return out
+
+
 def _nothing_booked(e: Exception) -> bool:
     """True when Grocy answered that no row carried the stock id it was sent.
 
@@ -840,6 +858,20 @@ def unit_matches(unit: dict, name: str) -> bool:
 # Shared connection pool for the life of the app
 _client = httpx.AsyncClient(timeout=15.0)
 _JSON = {"Content-Type": "application/json"}
+
+SERVER_ONLY_MESSAGE = "Grocy is managed on the main server."
+
+
+def _server_only(fn):
+    """For a method that changes how Grocy itself is set up. A Bandit's calls
+    go through its main server's proxy, which carries none of these, so on a
+    Bandit it refuses before anything is sent."""
+    @functools.wraps(fn)
+    async def wrapper(self, *args, **kwargs):
+        if self._upstream or settings.is_satellite():
+            raise GrocyError(SERVER_ONLY_MESSAGE, kind="config")
+        return await fn(self, *args, **kwargs)
+    return wrapper
 
 
 def _stock_unit_name(entry: dict, product: dict, units: dict[str, str]) -> str | None:
@@ -1806,6 +1838,7 @@ class GrocyClient:
         entries = await self._get(entries_path) or []
         moved = 0.0
         best_by_updates: list[dict] = []
+        grocy_dated: set[int] = set()
         settled: set[str] = set()
         # Each pass moves one whole row, so this only caps a Grocy that never
         # lets go of one.
@@ -1834,8 +1867,19 @@ class GrocyClient:
             # above already accounts for.
             if first.get("stock_id"):
                 transfer["stock_entry_id"] = first["stock_id"]
-            await self._post(f"/stock/products/{product_id}/transfer", transfer)
+            booked = await self._post(f"/stock/products/{product_id}/transfer", transfer)
             moved += amount
+            # Into or out of a Grocy freezer, Grocy dates the arrival itself
+            # for a product with its own freezing or thawing days, over the
+            # date written above. Report the date Grocy holds.
+            for left_with, arrived_with in _transfer_redates(booked):
+                i = next((i for i, u in enumerate(best_by_updates)
+                          if i not in grocy_dated and u["new"] == left_with), None)
+                if i is None:
+                    best_by_updates.append({"old": left_with, "new": left_with})
+                    i = len(best_by_updates) - 1
+                best_by_updates[i]["new"] = arrived_with
+                grocy_dated.add(i)
             entries = await self._get(entries_path) or []
 
         # Entries without a location can't be transferred, but changing the
@@ -1848,17 +1892,18 @@ class GrocyClient:
 
         # One transfer moves in one temperature direction, so every update
         # agrees; the earliest resulting date is the one the user will see
-        # drive the expiring list.
+        # drive the expiring list. Grocy can date undated stock it freezes.
+        dated = [u for u in best_by_updates if u["old"] and u["new"]]
         change = None
-        if best_by_updates:
-            change = ("extended" if best_by_updates[0]["new"] > best_by_updates[0]["old"]
-                      else "shortened")
+        if dated:
+            change = "extended" if dated[0]["new"] > dated[0]["old"] else "shortened"
+        new_dates = [u["new"] for u in best_by_updates if u["new"]]
         return {
             "product_id": product_id,
             "moved_amount": moved,
             "location_id": to_id,
             "best_by_updates": best_by_updates,
-            "new_best_by": min(u["new"] for u in best_by_updates) if best_by_updates else None,
+            "new_best_by": min(new_dates) if new_dates else None,
             "best_by_change": change,
         }
 
@@ -2339,6 +2384,116 @@ class GrocyClient:
                 "location_id": row.get("location_id"),
             })
         return result
+
+    # --- Tidying up older installs' locations (services/grocy_locations.py) ---
+
+    async def get_locations(self) -> list[dict]:
+        """Grocy's locations as they are now, never the per-instance cache."""
+        return await self._get("/objects/locations") or []
+
+    @_server_only
+    async def mark_location_freezer(self, location_id: int) -> None:
+        """Mark one location as a freezer in Grocy. Nothing else changes."""
+        await self._request("PUT", f"/objects/locations/{int(location_id)}",
+                            {"is_freezer": 1})
+
+    @_server_only
+    async def _held_at(self, location_id: int) -> list[dict]:
+        rows = await self._get(f"/stock/locations/{int(location_id)}/entries") or []
+        return [e for e in rows if _amount(e) > _DUST]
+
+    async def _transfer_all_rows(self, product_id: int, from_id: int, to_id: int) -> int:
+        """Move every stock row of one product from ``from_id`` to ``to_id``,
+        one whole row per transfer. Returns how many rows moved.
+
+        As in move_product, each transfer names the stock id and exact amount
+        of the row Grocy takes first for that id, and the entries are read
+        again after each one.
+        """
+        entries_path = f"/stock/products/{product_id}/entries"
+        entries = await self._get(entries_path) or []
+        moved = 0
+        for _ in range(len(entries) + 10):
+            row = next((e for e in entries
+                        if _in_stock(e) and _location_id(e) == from_id), None)
+            if row is None:
+                break
+            first = (_transfer_pool(entries, row, from_id) or [row])[0]
+            body = {"amount": _amount(first), "location_id_from": from_id,
+                    "location_id_to": to_id}
+            if first.get("stock_id"):
+                body["stock_entry_id"] = first["stock_id"]
+            await self._post(f"/stock/products/{product_id}/transfer", body)
+            moved += 1
+            entries = await self._get(entries_path) or []
+        return moved
+
+    @_server_only
+    async def merge_location(self, from_id: int, to_id: int) -> dict:
+        """Move everything in location ``from_id`` to ``to_id``, then hide
+        ``from_id`` in Grocy (active=0). Nothing is deleted.
+
+        Stock moves row by row (_transfer_all_rows), so each row keeps its
+        amount, best-by date, opened state, price and purchase date. Grocy
+        re-dates a transfer only between a freezer and a non-freezer, so the
+        caller checks that neither place is a freezer. Then every product whose
+        default location or default consume location is ``from_id`` points at
+        ``to_id``, and so does Grocy's preset location for new products. The
+        stock journal keeps its history as it was.
+
+        Every step reads Grocy again before it writes, so a merge cut short (a
+        power cut on a Pi) carries on from where it stopped when run again.
+        The place is hidden only once no stock and no product is left in it;
+        until then ``left`` names the products still there, ``weighed`` those
+        weighed with their container (Grocy transfers none of them) and
+        ``errors`` what Grocy answered. Returns {"moved_rows", "products",
+        "left", "weighed", "errors", "hidden"}.
+        """
+        from_id, to_id = int(from_id), int(to_id)
+        products = await self._get("/objects/products") or []
+        names = {str(p.get("id")): str(p.get("name") or "") for p in products}
+        tare = {str(p.get("id")) for p in products
+                if str(p.get("enable_tare_weight_handling") or "0") not in ("0", "")}
+        moved_rows = 0
+        errors: list[str] = []
+        weighed: list[str] = []
+        held = await self._held_at(from_id)
+        for pid in dict.fromkeys(str(e.get("product_id")) for e in held):
+            if pid in tare:
+                # Grocy 4.7.1 refuses to transfer these at all.
+                weighed.append(names.get(pid) or "A product")
+                continue
+            try:
+                moved_rows += await self._transfer_all_rows(int(pid), from_id, to_id)
+            except GrocyError as e:
+                if e.kind == "unreachable":
+                    raise
+                errors.append(f"{names.get(pid) or 'A product'}: {e}")
+
+        repointed = 0
+        for p in await self._get("/objects/products") or []:
+            change = {}
+            if _location_id(p) == from_id:
+                change["location_id"] = to_id
+            if _int_or_none(p.get("default_consume_location_id")) == from_id:
+                change["default_consume_location_id"] = to_id
+            if change:
+                await self._request("PUT", f"/objects/products/{int(p['id'])}", change)
+                repointed += 1
+        preset = "/user/settings/product_presets_location_id"
+        if _int_or_none((await self._get(preset) or {}).get("value")) == from_id:
+            await self._request("PUT", preset, {"value": to_id})
+
+        left = list(dict.fromkeys(names.get(str(e.get("product_id"))) or "A product"
+                                  for e in await self._held_at(from_id)))
+        pointing = [p for p in await self._get("/objects/products") or []
+                    if from_id in (_location_id(p),
+                                   _int_or_none(p.get("default_consume_location_id")))]
+        hidden = not left and not pointing
+        if hidden:
+            await self._request("PUT", f"/objects/locations/{from_id}", {"active": 0})
+        return {"moved_rows": moved_rows, "products": repointed, "left": left,
+                "weighed": weighed, "errors": errors, "hidden": hidden}
 
     # Why the last health check failed, in a short plain sentence, or "" when
     # it passed (or never ran). /health carries it so support can see the
